@@ -1,0 +1,6 @@
+{
+  "name": "BizNest - Business Ecosystem Platform",
+  "description": "Pakistan's premier digital business discovery, growth, and ecosystem platform.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
