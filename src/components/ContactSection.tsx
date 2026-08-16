@@ -19,7 +19,7 @@ export const ContactSection: React.FC<ContactSectionProps> = ({ isDarkMode }) =>
 
   const whatsappNumber = '923231040318';
   const whatsappFormatted = '+92 323 1040318';
-  const supportEmail = 'BizNest0@gmail.com';
+  const supportEmail = 'BizNestpk0@gmail.com';
   const whatsappUrl = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent('Hello BizNest Support, I have an inquiry regarding listing my business.')}`;
 
   const handleCopyEmail = () => {
