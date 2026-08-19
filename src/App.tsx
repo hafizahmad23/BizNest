@@ -24,7 +24,14 @@ import { ChatModal } from './components/ChatModal';
 import { SEOHead } from './components/SEOHead';
 import { WelcomeAuthScreen } from './components/WelcomeAuthScreen';
 import ResetPassword from './components/ResetPassword';
-import { getCurrentSupabaseUser, logoutFromSupabase } from './lib/supabaseAuth';
+import {
+  getCurrentSupabaseUser,
+  logoutFromSupabase,
+  subscribeToSupabaseAuthChanges,
+  updateSupabaseUserMetadata,
+} from './lib/supabaseAuth';
+
+import { supabase } from './lib/supabase';
 
 import {
   MOCK_BUSINESSES,
@@ -122,19 +129,68 @@ export default function App() {
   const [authChecked, setAuthChecked] = useState(false);
 
   useEffect(() => {
-    let active = true;
-    getCurrentSupabaseUser()
-      .then((user) => {
-        if (active) setCurrentUser(user);
-      })
-      .finally(() => {
-        if (active) setAuthChecked(true);
-      });
+  let active = true;
 
-    return () => {
-      active = false;
-    };
-  }, []);
+  const restoreSession = async () => {
+    try {
+      const user = await getCurrentSupabaseUser();
+
+      if (!active) {
+        return;
+      }
+
+      setCurrentUser(user);
+
+      if (user?.role === 'business') {
+        setCurrentView('dashboard');
+      } else if (user) {
+        setCurrentView('home');
+      }
+    } catch (error) {
+      console.error(
+        'Failed to restore Supabase session:',
+        error
+      );
+
+      if (active) {
+        setCurrentUser(null);
+        setCurrentView('home');
+      }
+    } finally {
+      if (active) {
+        setAuthChecked(true);
+      }
+    }
+  };
+
+  void restoreSession();
+
+  const unsubscribe =
+    subscribeToSupabaseAuthChanges(
+      async (user) => {
+        if (!active) {
+          return;
+        }
+
+        setCurrentUser(user);
+
+        if (user?.role === 'business') {
+          setCurrentView('dashboard');
+        } else if (user) {
+          setCurrentView('home');
+        } else {
+          setCurrentView('home');
+        }
+
+        setAuthChecked(true);
+      }
+    );
+
+  return () => {
+    active = false;
+    unsubscribe();
+  };
+}, []);
 
   // --------------------------------------------------
   // 7. LOGIN SUCCESS
@@ -738,45 +794,43 @@ export default function App() {
   // 26. UPGRADE TO BUSINESS
   // --------------------------------------------------
 
-  const handleUpgradeToBusiness =
-    () => {
-      if (!currentUser) {
-        return;
-      }
+ const handleUpgradeToBusiness = async () => {
+  if (!currentUser) {
+    return;
+  }
 
-      const updatedUser: User = {
-        ...currentUser,
+  const businessName =
+    currentUser.businessName?.trim() ||
+    `${currentUser.name}'s Business`;
 
-        role: 'business',
+  const result = await updateSupabaseUserMetadata({
+    role: 'business',
+    businessName,
+  });
 
-        businessName:
-          `${currentUser.name}'s Business`,
-      };
+  if (!result.success || !result.user) {
+    console.error(
+      'BizNest business upgrade failed:',
+      result.error
+    );
 
-      setCurrentUser(
-        updatedUser
-      );
+    alert(
+      result.error ||
+        'Business account upgrade could not be saved. Please try again.'
+    );
 
-      try {
-        localStorage.setItem(
-          'biznest_auth_user',
-          JSON.stringify(
-            updatedUser
-          )
-        );
-      } catch (error) {
-        console.warn(
-          'Unable to save upgraded user:',
-          error
-        );
-      }
+    return;
+  }
 
-      setIsSettingsOpen(false);
+  setCurrentUser(result.user);
+  setCurrentView('dashboard');
+  setIsSettingsOpen(false);
 
-      handleNavigate(
-        'dashboard'
-      );
-    };
+  window.scrollTo({
+    top: 0,
+    behavior: 'smooth',
+  });
+};
 
   // --------------------------------------------------
   // 27. ADD BUSINESS

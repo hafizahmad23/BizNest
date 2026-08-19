@@ -9,7 +9,12 @@ export type AuthResult = {
   needsEmailConfirmation?: boolean;
 };
 
-function mapSupabaseUser(user: any): UserType {
+/**
+ * Convert Supabase's auth user into BizNest's application User model.
+ * The role/business fields are intentionally read from user_metadata because
+ * they are persisted by Supabase and therefore survive refresh/login.
+ */
+export function mapSupabaseUser(user: any): UserType {
   const metadata = user?.user_metadata ?? {};
 
   return {
@@ -19,23 +24,15 @@ function mapSupabaseUser(user: any): UserType {
       metadata.full_name ||
       user.email?.split('@')[0] ||
       'User',
-
     email: user.email ?? '',
-
     phone: user.phone || metadata.phone || '',
-
     role: metadata.role === 'business' ? 'business' : 'user',
-
     city: metadata.city || 'Lahore',
-
     savedBusinessIds: Array.isArray(metadata.savedBusinessIds)
       ? metadata.savedBusinessIds
       : [],
-
     businessName: metadata.businessName || undefined,
-
     businessId: metadata.businessId || undefined,
-
     createdAt: user.created_at
       ? user.created_at.split('T')[0]
       : new Date().toISOString().split('T')[0],
@@ -91,10 +88,8 @@ export async function registerWithSupabase(data: {
   const { data: authData, error } = await supabase.auth.signUp({
     email,
     password: data.password,
-
     options: {
       emailRedirectTo: window.location.origin,
-
       data: {
         name: data.name.trim(),
         phone: data.phone.trim(),
@@ -122,10 +117,6 @@ export async function registerWithSupabase(data: {
 
   const user = mapSupabaseUser(authData.user);
 
-  /*
-   * If email confirmation is enabled in Supabase,
-   * user exists but session is null until email is verified.
-   */
   if (!authData.session) {
     return {
       success: true,
@@ -226,7 +217,6 @@ export async function loginWithSupabasePhone(
 export async function loginWithGoogle(): Promise<AuthResult> {
   const { error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
-
     options: {
       redirectTo: window.location.origin,
     },
@@ -248,9 +238,7 @@ export async function loginWithGoogle(): Promise<AuthResult> {
    FORGOT PASSWORD - SEND REAL EMAIL OTP
 ========================================================= */
 
-export async function sendPasswordResetCode(
-  email: string
-): Promise<AuthResult> {
+export async function sendPasswordResetCode(email: string): Promise<AuthResult> {
   const cleanEmail = email.trim().toLowerCase();
 
   if (!cleanEmail) {
@@ -260,13 +248,9 @@ export async function sendPasswordResetCode(
     };
   }
 
-  const { error } =
-    await supabase.auth.resetPasswordForEmail(
-      cleanEmail,
-      {
-        redirectTo: `${window.location.origin}/reset-password`,
-      }
-    );
+  const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+    redirectTo: `${window.location.origin}/reset-password`,
+  });
 
   if (error) {
     return {
@@ -300,18 +284,16 @@ export async function verifyPasswordResetCode(
     };
   }
 
-  const { data, error } =
-    await supabase.auth.verifyOtp({
-      email: cleanEmail,
-      token: cleanCode,
-      type: 'recovery',
-    });
+  const { data, error } = await supabase.auth.verifyOtp({
+    email: cleanEmail,
+    token: cleanCode,
+    type: 'recovery',
+  });
 
   if (error) {
     return {
       success: false,
-      error:
-        'Invalid or expired verification code. Please request a new code.',
+      error: 'Invalid or expired verification code. Please request a new code.',
     };
   }
 
@@ -361,21 +343,74 @@ export async function updateSupabasePassword(
 }
 
 /* =========================================================
-   STANDARD SUPABASE RESET LINK
-   Kept available for future use.
+   UPDATE USER PROFILE / ACCOUNT ROLE
+
+   This is the critical persistence fix:
+   Business upgrades are written to Supabase user_metadata, not only
+   browser localStorage. The metadata survives refresh and future logins.
 ========================================================= */
 
-export async function sendPasswordResetEmail(
-  email: string
+export async function updateSupabaseUserMetadata(
+  updates: Record<string, unknown>
 ): Promise<AuthResult> {
+  const {
+    data: { user: currentUser },
+    error: getUserError,
+  } = await supabase.auth.getUser();
+
+  if (getUserError) {
+    return {
+      success: false,
+      error: readableAuthError(getUserError.message),
+    };
+  }
+
+  if (!currentUser) {
+    return {
+      success: false,
+      error: 'You are not currently signed in.',
+    };
+  }
+
+  const currentMetadata = currentUser.user_metadata ?? {};
+
+  const { data, error } = await supabase.auth.updateUser({
+    data: {
+      ...currentMetadata,
+      ...updates,
+    },
+  });
+
+  if (error) {
+    return {
+      success: false,
+      error: readableAuthError(error.message),
+    };
+  }
+
+  if (!data.user) {
+    return {
+      success: false,
+      error: 'Account details could not be updated.',
+    };
+  }
+
+  return {
+    success: true,
+    user: mapSupabaseUser(data.user),
+  };
+}
+
+/* =========================================================
+   STANDARD SUPABASE RESET LINK
+========================================================= */
+
+export async function sendPasswordResetEmail(email: string): Promise<AuthResult> {
   const cleanEmail = email.trim().toLowerCase();
 
-  const { error } = await supabase.auth.resetPasswordForEmail(
-    cleanEmail,
-    {
-      redirectTo: `${window.location.origin}/reset-password`,
-    }
-  );
+  const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+    redirectTo: `${window.location.origin}/reset-password`,
+  });
 
   if (error) {
     return {
@@ -424,4 +459,23 @@ export async function getCurrentSupabaseUser(): Promise<UserType | null> {
   }
 
   return mapSupabaseUser(user);
+}
+
+/* =========================================================
+   AUTH STATE LISTENER
+
+   Keeps React synchronized with Supabase across login, logout,
+   token refresh, browser restore, OAuth callback, etc.
+========================================================= */
+
+export function subscribeToSupabaseAuthChanges(
+  onUserChange: (user: UserType | null) => void
+): () => void {
+  const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+    onUserChange(session?.user ? mapSupabaseUser(session.user) : null);
+  });
+
+  return () => {
+    data.subscription.unsubscribe();
+  };
 }
