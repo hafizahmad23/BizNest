@@ -10,6 +10,7 @@ interface CartDrawerProps {
   onRemoveItem: (id: string) => void;
   onClearCart: () => void;
   onProceedToCheckout: () => void;
+  onBrowse?: () => void;
   isDarkMode?: boolean;
 }
 
@@ -21,6 +22,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   onRemoveItem,
   onClearCart,
   onProceedToCheckout,
+  onBrowse,
   isDarkMode = true
 }) => {
   if (!isOpen) return null;
@@ -61,8 +63,17 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
           {items.length === 0 ? (
             <div className="text-center py-16 text-slate-400 space-y-3">
               <ShoppingBag className="w-12 h-12 mx-auto opacity-30" />
-              <p className="font-bold text-sm">Your cart is currently empty</p>
-              <p className="text-xs text-slate-500 max-w-xs mx-auto">Browse products and services across verified Pakistani businesses and add items to your cart!</p>
+              <p className="font-bold text-sm">Your cart is empty.</p>
+              <p className="text-xs text-slate-500 max-w-xs mx-auto">Browse products and services from Pakistani businesses and add items to your cart!</p>
+              {onBrowse && (
+                <button
+                  onClick={onBrowse}
+                  className="px-5 py-2.5 rounded-xl bg-emerald-500 text-slate-950 font-extrabold text-xs inline-flex items-center gap-2"
+                >
+                  Browse Products
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
           ) : (
             items.map((item) => (

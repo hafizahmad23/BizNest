@@ -1,43 +1,60 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { Building2, MapPin, Users, Clock, ShieldCheck, Zap } from 'lucide-react';
-import { PLATFORM_STATS } from '../data/mockData';
+import { Building2, MapPin, Star, LayoutGrid, Zap } from 'lucide-react';
+import { fetchPlatformStats } from '../lib/supabaseDB';
+import { PlatformStats } from '../types';
 
 interface LiveStatsProps {
   isDarkMode: boolean;
 }
 
+/**
+ * Platform statistics — REAL counts from the Supabase database.
+ * When a count is 0, it honestly displays 0 (never invented numbers).
+ */
 export const LiveStats: React.FC<LiveStatsProps> = ({ isDarkMode }) => {
-  const stats = [
+  const [stats, setStats] = useState<PlatformStats | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    fetchPlatformStats().then(({ data }) => {
+      if (active && data) setStats(data);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const cards = [
     {
       label: 'Active Businesses',
-      value: '50,000+',
-      subtext: 'Across 16+ Sectors',
+      value: (stats?.totalBusinesses ?? 0).toLocaleString(),
+      subtext: 'Live on BizNest',
       icon: Building2,
       color: 'from-emerald-600 to-teal-600 dark:from-emerald-400 dark:to-teal-400',
       iconBg: 'bg-emerald-50 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/30'
     },
     {
       label: 'Cities Covered',
-      value: '100+',
-      subtext: 'Pakistan-wide Hubs',
+      value: (stats?.totalCities ?? 0).toLocaleString(),
+      subtext: 'With listed businesses',
       icon: MapPin,
       color: 'from-cyan-600 to-blue-600 dark:from-cyan-400 dark:to-blue-400',
       iconBg: 'bg-cyan-50 dark:bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border-cyan-200 dark:border-cyan-500/30'
     },
     {
-      label: 'Monthly Visitors',
-      value: '200,000+',
-      subtext: 'High-Intent Buyers',
-      icon: Users,
+      label: 'Customer Reviews',
+      value: (stats?.totalReviews ?? 0).toLocaleString(),
+      subtext: 'Real written reviews',
+      icon: Star,
       color: 'from-purple-600 to-indigo-600 dark:from-purple-400 dark:to-pink-400',
       iconBg: 'bg-purple-50 dark:bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-200 dark:border-purple-500/30'
     },
     {
-      label: 'Avg Response Time',
-      value: '< 12 Mins',
-      subtext: 'Direct WhatsApp/Call',
-      icon: Clock,
+      label: 'Active Categories',
+      value: (stats?.totalCategories ?? 0).toLocaleString(),
+      subtext: 'Sectors with listings',
+      icon: LayoutGrid,
       color: 'from-amber-600 to-orange-600 dark:from-amber-400 dark:to-orange-400',
       iconBg: 'bg-amber-50 dark:bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-500/30'
     }
@@ -46,7 +63,7 @@ export const LiveStats: React.FC<LiveStatsProps> = ({ isDarkMode }) => {
   return (
     <section className="py-10 px-4 sm:px-8 max-w-7xl mx-auto">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {stats.map((stat, idx) => {
+        {cards.map((stat, idx) => {
           const Icon = stat.icon;
           return (
             <motion.div

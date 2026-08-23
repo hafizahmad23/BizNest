@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { ShieldCheck, Star, Clock, MapPin, Phone, MessageCircle, Sparkles, Check, Scale } from 'lucide-react';
+import { ShieldCheck, Star, Eye, MapPin, Phone, MessageCircle, Sparkles, Scale } from 'lucide-react';
 import { Business } from '../types';
 
 interface BusinessCardProps {
@@ -60,7 +60,7 @@ export const BusinessCard: React.FC<BusinessCardProps> = ({
           </button>
         )}
 
-        {/* Verified Shield Badge & Trust Score */}
+        {/* Verified Shield Badge */}
         <div className="absolute bottom-3 left-3 flex items-center gap-2">
           {business.isVerified && (
             <div className="flex items-center gap-1 bg-emerald-500 text-slate-950 px-2 py-0.5 rounded-md font-extrabold text-[10px] shadow-lg">
@@ -68,17 +68,19 @@ export const BusinessCard: React.FC<BusinessCardProps> = ({
               <span>VERIFIED HUB</span>
             </div>
           )}
-
-          <div className="bg-slate-950/90 text-emerald-400 border border-emerald-500/40 px-2 py-0.5 rounded-md font-mono text-[10px] font-extrabold">
-            {business.trustScore}% TRUST SCORE
-          </div>
         </div>
 
-        {/* Rating Badge */}
+        {/* Rating Badge — REAL average from the reviews table */}
         <div className="absolute bottom-3 right-3 flex items-center gap-1 bg-slate-950/90 text-yellow-400 px-2 py-0.5 rounded-md font-bold text-xs border border-slate-800">
           <Star className="w-3.5 h-3.5 fill-yellow-400" />
-          <span>{business.rating}</span>
-          <span className="text-[10px] text-slate-400">({business.reviewCount})</span>
+          {business.reviewCount > 0 ? (
+            <>
+              <span>{business.rating.toFixed(1)}</span>
+              <span className="text-[10px] text-slate-400">({business.reviewCount})</span>
+            </>
+          ) : (
+            <span className="text-[10px] text-slate-300">New</span>
+          )}
         </div>
       </div>
 
@@ -121,7 +123,7 @@ export const BusinessCard: React.FC<BusinessCardProps> = ({
             </div>
           )}
 
-          {/* Location & Response Time Meta */}
+          {/* Location & Views Meta (real counters) */}
           <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 dark:text-slate-400 my-2 font-medium">
             <span className="flex items-center gap-1 text-slate-700 dark:text-slate-300">
               <MapPin className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
@@ -129,25 +131,27 @@ export const BusinessCard: React.FC<BusinessCardProps> = ({
             </span>
 
             <span className="flex items-center gap-1 text-slate-700 dark:text-slate-300">
-              <Clock className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
-              <span>Reply: <strong>{business.responseTime}</strong></span>
+              <Eye className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+              <span><strong>{business.viewsCount || 0}</strong> views</span>
             </span>
           </div>
         </div>
 
         {/* Action Buttons */}
         <div className="pt-3 mt-3 border-t border-slate-100 dark:border-slate-800/80 flex items-center gap-2">
-          {/* Direct WhatsApp */}
-          <a
-            href={`https://wa.me/${business.whatsapp.replace(/[^0-9]/g, '')}?text=Hi%20${encodeURIComponent(business.name)},%20I%20found%20you%20on%20BizNest%20and%20would%20like%20to%20inquire.`}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            className="flex-1 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-600 dark:bg-emerald-500/15 dark:hover:bg-emerald-500 text-emerald-700 hover:text-white dark:text-emerald-400 dark:hover:text-slate-950 border border-emerald-200 dark:border-emerald-500/30 text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-sm"
-          >
-            <MessageCircle className="w-3.5 h-3.5" />
-            <span>WhatsApp</span>
-          </a>
+          {/* Direct WhatsApp (only when the owner provided a number) */}
+          {business.whatsapp && (
+            <a
+              href={`https://wa.me/${business.whatsapp.replace(/[^0-9]/g, '')}?text=Hi%20${encodeURIComponent(business.name)},%20I%20found%20you%20on%20BizNest%20and%20would%20like%20to%20inquire.`}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="flex-1 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-600 dark:bg-emerald-500/15 dark:hover:bg-emerald-500 text-emerald-700 hover:text-white dark:text-emerald-400 dark:hover:text-slate-950 border border-emerald-200 dark:border-emerald-500/30 text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-sm"
+            >
+              <MessageCircle className="w-3.5 h-3.5" />
+              <span>WhatsApp</span>
+            </a>
+          )}
 
           {/* Phone Call */}
           <a

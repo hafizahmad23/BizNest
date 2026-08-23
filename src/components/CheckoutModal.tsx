@@ -1,86 +1,114 @@
 import React, { useState } from 'react';
-import { X, ShieldCheck, CheckCircle2, CreditCard, Wallet, QrCode, Truck, ArrowRight, AlertTriangle, Building, Copy, Check } from 'lucide-react';
-import { CartItem, PaymentMethod, Order, User } from '../types';
+import { X, ShieldCheck, CheckCircle2, Truck, Lock, AlertTriangle, Loader2 } from 'lucide-react';
+import { CartItem, PaymentMethod, User } from '../types';
+
+interface CheckoutDraft {
+  paymentMethod: PaymentMethod;
+  address: string;
+  city: string;
+  transactionRef?: string;
+}
 
 interface CheckoutModalProps {
   isOpen: boolean;
   onClose: () => void;
   items: CartItem[];
   user: User | null;
-  onOrderPlaced: (order: Order) => void;
+  /** Creates the order(s) in Supabase. payment_status is always 'pending'. */
+  onPlaceOrder: (draft: CheckoutDraft) => Promise<{ success: boolean; error?: string }>;
+  onRequireAuth: () => void;
   isDarkMode?: boolean;
 }
 
+/**
+ * Secure checkout.
+ * - Cash on Delivery is the only ENABLED payment method (all other gateways
+ *   are honestly marked "Coming Soon" because no real payment gateway is
+ *   integrated yet).
+ * - payment_status is ALWAYS 'pending' — an order is never marked paid just
+ *   because a user clicked a button.
+ * - No hardcoded merchant account numbers / IBANs exist in this file.
+ */
 export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   isOpen,
   onClose,
   items,
   user,
-  onOrderPlaced,
+  onPlaceOrder,
+  onRequireAuth,
   isDarkMode = true
 }) => {
   const [step, setStep] = useState<'details' | 'payment' | 'success'>('details');
-  const [selectedPayment, setSelectedPayment] = useState<PaymentMethod>('easypaisa');
-  
-  // Shipping form
-  const [fullName, setFullName] = useState(user?.name || '');
-  const [phone, setPhone] = useState(user?.phone || '+92 300 1234567');
-  const [email, setEmail] = useState(user?.email || 'customer@example.pk');
-  const [city, setCity] = useState(user?.city || 'Lahore');
-  const [address, setAddress] = useState('House # 45, Street 12, Phase 5 DHA, Lahore');
-  const [transactionRef, setTransactionRef] = useState('');
-  const [copied, setCopied] = useState(false);
-  const [placedOrder, setPlacedOrder] = useState<Order | null>(null);
+  const [selectedPayment, setSelectedPayment] = useState<PaymentMethod>('cod');
 
-  if (!isOpen || items.length === 0) return null;
+  const [fullName, setFullName] = useState(user?.name || '');
+  const [phone, setPhone] = useState(user?.phone || '');
+  const [email, setEmail] = useState(user?.email || '');
+  const [city, setCity] = useState(user?.city || '');
+  const [address, setAddress] = useState('');
+  const [formError, setFormError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [orderError, setOrderError] = useState<string | null>(null);
+
+  // Keep the modal visible on the success screen even after the cart empties.
+  if (!isOpen) return null;
+  if (items.length === 0 && step !== 'success') return null;
 
   const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const deliveryFee = subtotal > 10000 ? 0 : 250;
   const grandTotal = subtotal + deliveryFee;
 
-  const handleCopy = (text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  const handleConfirmOrder = () => {
-    const newOrder: Order = {
-      id: `BN-${Math.floor(100000 + Math.random() * 900000)}`,
-      userId: user?.id || 'guest-1',
-      userName: fullName || 'Customer',
-      userEmail: email,
-      userPhone: phone,
-      address,
-      city,
-      items: [...items],
-      subtotal,
-      deliveryFee,
-      totalAmount: grandTotal,
-      paymentMethod: selectedPayment,
-      paymentStatus: selectedPayment === 'cod' ? 'pending' : 'paid',
-      orderStatus: 'confirmed',
-      transactionRef: transactionRef || `TXN-${Date.now()}`,
-      createdAt: new Date().toISOString().split('T')[0]
-    };
-
-    setPlacedOrder(newOrder);
-    onOrderPlaced(newOrder);
-    setStep('success');
-  };
-
-  const paymentOptions: { id: PaymentMethod; name: string; tag: string; icon: string; detail: string; accountNo: string; title: string }[] = [
-    { id: 'easypaisa', name: 'Easypaisa', tag: 'Mobile Wallet', icon: '📲', detail: 'Till ID / Mobile Wallet', accountNo: '0300 8459123', title: 'BizNest Pakistan Pvt Ltd' },
-    { id: 'jazzcash', name: 'JazzCash', tag: 'Mobile Wallet', icon: '📱', detail: 'Mobile Account', accountNo: '0321 9876543', title: 'BizNest Pakistan Pvt Ltd' },
-    { id: 'sadapay', name: 'SadaPay', tag: 'Digital Banking', icon: '💳', detail: 'SadaTag Username', accountNo: '@biznest', title: 'BizNest Merchant Hub' },
-    { id: 'nayapay', name: 'NayaPay', tag: 'Digital Wallet', icon: '🌐', detail: 'NayaID', accountNo: 'biznest@nayapay', title: 'BizNest Pakistan' },
-    { id: 'raast', name: 'Raast Pay', tag: 'SBP Instant Pay', icon: '⚡', detail: 'State Bank Raast ID', accountNo: 'RAAST-923008459123', title: 'BizNest SBP Account' },
-    { id: 'bank_transfer', name: 'Bank Transfer', tag: '1LINK / IBAN', icon: '🏛️', detail: 'Meezan / HBL IBAN', accountNo: 'PK36MEZN0001020304050607', title: 'BizNest Corporate Account' },
-    { id: 'binance_pay', name: 'Binance Pay', tag: 'Crypto / USDT', icon: '🟡', detail: 'Binance Pay ID (USDT / BUSD)', accountNo: '84920194', title: 'BizNest Binance Official' },
-    { id: 'cod', name: 'Cash on Delivery', tag: 'Pay at Doorstep', icon: '🚚', detail: 'Cash to Courier Rider', accountNo: 'N/A', title: 'Pay Cash Upon Receipt' },
+  const paymentOptions: { id: PaymentMethod; name: string; tag: string; icon: string; enabled: boolean }[] = [
+    { id: 'cod', name: 'Cash on Delivery', tag: 'Pay at Doorstep', icon: '🚚', enabled: true },
+    { id: 'easypaisa', name: 'Easypaisa', tag: 'Coming Soon', icon: '📲', enabled: false },
+    { id: 'jazzcash', name: 'JazzCash', tag: 'Coming Soon', icon: '📱', enabled: false },
+    { id: 'bank_transfer', name: 'Bank Transfer', tag: 'Coming Soon', icon: '🏛️', enabled: false },
+    { id: 'raast', name: 'Raast Pay', tag: 'Coming Soon', icon: '⚡', enabled: false },
+    { id: 'sadapay', name: 'SadaPay', tag: 'Coming Soon', icon: '💳', enabled: false },
+    { id: 'nayapay', name: 'NayaPay', tag: 'Coming Soon', icon: '🌐', enabled: false },
+    { id: 'binance_pay', name: 'Binance Pay', tag: 'Coming Soon', icon: '🟡', enabled: false },
   ];
 
-  const currentPaymentInfo = paymentOptions.find(p => p.id === selectedPayment);
+  const validateDetails = (): boolean => {
+    if (!fullName.trim()) {
+      setFormError('Please enter the recipient full name.');
+      return false;
+    }
+    if (!phone.trim()) {
+      setFormError('Please enter a phone number for courier contact.');
+      return false;
+    }
+    if (!city.trim()) {
+      setFormError('Please enter your city.');
+      return false;
+    }
+    if (!address.trim() || address.trim().length < 10) {
+      setFormError('Please enter a complete street address (minimum 10 characters).');
+      return false;
+    }
+    setFormError(null);
+    return true;
+  };
+
+  const handleConfirmOrder = async () => {
+    setSubmitting(true);
+    setOrderError(null);
+
+    const result = await onPlaceOrder({
+      paymentMethod: 'cod',
+      address: `${address.trim()} (Recipient: ${fullName.trim()}, Phone: ${phone.trim()}${email.trim() ? `, Email: ${email.trim()}` : ''})`,
+      city: city.trim(),
+    });
+
+    setSubmitting(false);
+
+    if (!result.success) {
+      setOrderError(result.error || 'Order could not be placed. Please try again.');
+      return;
+    }
+
+    setStep('success');
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-fade-in">
@@ -95,7 +123,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
             </div>
             <div>
               <h2 className="font-extrabold text-lg">Secure Checkout</h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Step {step === 'details' ? '1 of 2: Shipping' : step === 'payment' ? '2 of 2: Payment' : 'Complete'}</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Step {step === 'details' ? '1 of 2: Shipping' : step === 'payment' ? '2 of 2: Payment' : 'Complete'}
+              </p>
             </div>
           </div>
 
@@ -113,7 +143,24 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
         {/* Content Body */}
         <div className="p-6 sm:p-8 overflow-y-auto flex-1 space-y-6">
-          {step === 'details' && (
+          {/* Guest checkout is not supported — orders belong to real buyers */}
+          {!user && step !== 'success' && (
+            <div className="p-6 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-center space-y-3">
+              <Lock className="w-8 h-8 mx-auto text-amber-400" />
+              <p className="text-sm font-bold text-amber-400">Login required to place an order</p>
+              <p className="text-xs text-slate-400">
+                Orders are saved to your account so you can track them later. Please log in or create a free account first.
+              </p>
+              <button
+                onClick={onRequireAuth}
+                className="px-5 py-2.5 rounded-xl bg-emerald-500 text-slate-950 font-extrabold text-xs"
+              >
+                Login / Create Account
+              </button>
+            </div>
+          )}
+
+          {user && step === 'details' && (
             <div className="space-y-4">
               <h3 className="text-sm font-bold flex items-center gap-2 text-slate-900 dark:text-white">
                 <Truck className="w-4 h-4 text-emerald-500" />
@@ -122,10 +169,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1 block">Full Name</label>
+                  <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1 block">Full Name *</label>
                   <input
                     type="text"
-                    required
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
                     className={`w-full px-3 py-2.5 rounded-xl border text-xs focus:outline-none focus:border-emerald-500 ${
@@ -135,12 +181,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 </div>
 
                 <div>
-                  <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1 block">Phone Number (For Courier SMS)</label>
+                  <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1 block">Phone Number (For Courier SMS) *</label>
                   <input
                     type="text"
-                    required
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
+                    placeholder="03XXXXXXXXX"
                     className={`w-full px-3 py-2.5 rounded-xl border text-xs focus:outline-none focus:border-emerald-500 ${
                       isDarkMode ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-200 text-slate-900'
                     }`}
@@ -153,7 +199,6 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                   <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1 block">Email</label>
                   <input
                     type="email"
-                    required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className={`w-full px-3 py-2.5 rounded-xl border text-xs focus:outline-none focus:border-emerald-500 ${
@@ -163,218 +208,171 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 </div>
 
                 <div>
-                  <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1 block">City</label>
-                  <select
+                  <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1 block">City *</label>
+                  <input
+                    type="text"
                     value={city}
                     onChange={(e) => setCity(e.target.value)}
+                    placeholder="e.g. Lahore"
                     className={`w-full px-3 py-2.5 rounded-xl border text-xs focus:outline-none focus:border-emerald-500 ${
                       isDarkMode ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-200 text-slate-900'
                     }`}
-                  >
-                    <option value="Lahore">Lahore</option>
-                    <option value="Karachi">Karachi</option>
-                    <option value="Islamabad">Islamabad</option>
-                    <option value="Rawalpindi">Rawalpindi</option>
-                    <option value="Multan">Multan</option>
-                    <option value="Peshawar">Peshawar</option>
-                    <option value="Faisalabad">Faisalabad</option>
-                    <option value="Sialkot">Sialkot</option>
-                    <option value="Quetta">Quetta</option>
-                  </select>
+                  />
                 </div>
               </div>
 
               <div>
-                <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1 block">Complete Street Address / House / Area</label>
+                <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1 block">Complete Street Address / House / Area *</label>
                 <textarea
                   rows={2}
                   value={address}
                   onChange={(e) => setAddress(e.target.value)}
+                  placeholder="House #, Street, Area/Sector, City"
                   className={`w-full px-3 py-2.5 rounded-xl border text-xs focus:outline-none focus:border-emerald-500 ${
                     isDarkMode ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-200 text-slate-900'
                   }`}
                 />
               </div>
 
+              {formError && (
+                <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs font-bold flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  {formError}
+                </div>
+              )}
+
               {/* Order Summary Box */}
               <div className={`p-4 rounded-2xl border ${
                 isDarkMode ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'
               }`}>
-                <div className="text-xs font-bold mb-2">Order Items ({items.length}):</div>
-                <div className="space-y-1 mb-3">
-                  {items.map((it) => (
-                    <div key={it.id} className="flex justify-between text-xs text-slate-500 dark:text-slate-300">
-                      <span>{it.productName} × {it.quantity}</span>
-                      <span className="font-semibold">PKR {(it.price * it.quantity).toLocaleString()}</span>
+                <div className="text-[11px] font-bold uppercase text-slate-500 mb-2">Order Summary</div>
+                <div className="space-y-1.5 text-xs max-h-32 overflow-y-auto">
+                  {items.map((item) => (
+                    <div key={item.id} className="flex justify-between text-slate-600 dark:text-slate-300">
+                      <span className="truncate pr-2">{item.productName} × {item.quantity}</span>
+                      <span className="font-bold shrink-0">PKR {(item.price * item.quantity).toLocaleString()}</span>
                     </div>
                   ))}
                 </div>
-                <div className="flex justify-between pt-2 border-t border-slate-200 dark:border-slate-800 text-xs font-bold">
-                  <span>Grand Total:</span>
-                  <span className="text-emerald-500 text-sm">PKR {grandTotal.toLocaleString()}</span>
+                <div className="flex justify-between text-xs pt-2 mt-2 border-t border-slate-200 dark:border-slate-800 text-slate-500">
+                  <span>Delivery Fee:</span>
+                  <span className="font-bold">{deliveryFee === 0 ? 'FREE' : `PKR ${deliveryFee}`}</span>
+                </div>
+                <div className="flex justify-between text-sm font-black pt-1">
+                  <span>Total:</span>
+                  <span className="text-emerald-500">PKR {grandTotal.toLocaleString()}</span>
                 </div>
               </div>
 
               <button
-                onClick={() => setStep('payment')}
-                className="w-full py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 dark:bg-emerald-500 dark:hover:bg-emerald-400 text-white dark:text-slate-950 font-extrabold text-xs flex items-center justify-center gap-2 cursor-pointer shadow-lg transition"
+                onClick={() => validateDetails() && setStep('payment')}
+                className="w-full py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs shadow-lg transition cursor-pointer"
               >
-                <span>Continue to Payment Method</span>
-                <ArrowRight className="w-4 h-4" />
+                Continue to Payment Method →
               </button>
             </div>
           )}
 
-          {step === 'payment' && (
-            <div className="space-y-5">
-              {/* Buyer Protection Warning Banner */}
-              <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs flex items-start gap-2.5">
-                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                <p className="leading-relaxed text-[11px]">
-                  <strong>Buyer Protection Guaranteed:</strong> Keeping payments on-platform protects your money. Transactions done outside BizNest (e.g. direct private accounts or unverified transfers) carry risk and are strictly at your own responsibility.
-                </p>
-              </div>
+          {user && step === 'payment' && (
+            <div className="space-y-4">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white">Select Payment Method</h3>
 
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white">Select Payment Method:</h3>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                Online payment gateways are being integrated. Currently only
+                <strong className="text-emerald-500"> Cash on Delivery </strong>
+                is available — you pay the courier when your order arrives.
+              </p>
 
-              {/* Payment Methods Grid */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                {paymentOptions.map((pm) => (
-                  <button
-                    key={pm.id}
-                    type="button"
-                    onClick={() => setSelectedPayment(pm.id)}
-                    className={`p-3 rounded-2xl border text-left transition flex flex-col justify-between ${
-                      selectedPayment === pm.id
-                        ? 'border-emerald-500 bg-emerald-500/10 ring-1 ring-emerald-500'
-                        : isDarkMode ? 'bg-slate-950 border-slate-800 hover:border-slate-700' : 'bg-slate-50 border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <div className="text-xl mb-1">{pm.icon}</div>
-                    <div>
-                      <div className="font-bold text-xs truncate">{pm.name}</div>
-                      <div className="text-[10px] text-slate-400 truncate">{pm.tag}</div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-
-              {/* Selected Payment Instructions Card */}
-              {currentPaymentInfo && selectedPayment !== 'cod' && (
-                <div className={`p-4 rounded-2xl border ${
-                  isDarkMode ? 'bg-slate-950 border-slate-800' : 'bg-slate-100 border-slate-200'
-                }`}>
-                  <div className="text-xs font-bold mb-2 flex items-center justify-between">
-                    <span>Payment Account Details ({currentPaymentInfo.name}):</span>
-                    <span className="text-[10px] font-mono text-emerald-500 uppercase">{currentPaymentInfo.detail}</span>
-                  </div>
-
-                  <div className="p-3 rounded-xl bg-slate-900 dark:bg-slate-900/90 text-white space-y-1 text-xs mb-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-400 text-[11px]">Account / ID / IBAN:</span>
-                      <button
-                        onClick={() => handleCopy(currentPaymentInfo.accountNo)}
-                        className="text-emerald-400 hover:underline flex items-center gap-1 text-[11px] font-bold"
-                      >
-                        {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                        <span>{currentPaymentInfo.accountNo}</span>
-                      </button>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-400 text-[11px]">Account Title:</span>
-                      <span className="font-bold text-[11px]">{currentPaymentInfo.title}</span>
-                    </div>
-                    <div className="flex items-center justify-between pt-1 border-t border-slate-800">
-                      <span className="text-slate-400 text-[11px]">Amount to Send:</span>
-                      <span className="font-black text-emerald-400 text-xs">PKR {grandTotal.toLocaleString()}</span>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1 block">
-                      Transaction Reference / TID (Optional / For Instant Auto-Verification)
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g. 02938102938"
-                      value={transactionRef}
-                      onChange={(e) => setTransactionRef(e.target.value)}
-                      className={`w-full px-3 py-2 rounded-xl border text-xs focus:outline-none focus:border-emerald-500 ${
-                        isDarkMode ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-900'
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {paymentOptions.map((option) => {
+                  const isSelected = selectedPayment === option.id;
+                  return (
+                    <button
+                      key={option.id}
+                      disabled={!option.enabled}
+                      onClick={() => option.enabled && setSelectedPayment(option.id)}
+                      className={`p-4 rounded-2xl border text-left transition relative ${
+                        !option.enabled
+                          ? 'opacity-50 cursor-not-allowed bg-slate-100 dark:bg-slate-950 border-slate-200 dark:border-slate-800'
+                          : isSelected
+                          ? 'bg-emerald-500/10 border-emerald-500 ring-1 ring-emerald-500/40'
+                          : isDarkMode
+                          ? 'bg-slate-950 border-slate-800 hover:border-emerald-500/40'
+                          : 'bg-slate-50 border-slate-200 hover:border-emerald-400'
                       }`}
-                    />
-                  </div>
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <span className="text-xl">{option.icon}</span>
+                        <div>
+                          <div className="font-bold text-xs flex items-center gap-2">
+                            {option.name}
+                            {!option.enabled && (
+                              <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-500 text-[9px] font-black uppercase">
+                                Coming Soon
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px] text-slate-500">{option.tag}</div>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {orderError && (
+                <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs font-bold flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  {orderError}
                 </div>
               )}
 
-              {selectedPayment === 'cod' && (
-                <div className={`p-4 rounded-2xl border text-xs space-y-1 ${
-                  isDarkMode ? 'bg-slate-950 border-slate-800 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-700'
-                }`}>
-                  <p className="font-bold text-slate-900 dark:text-white">Cash on Delivery Selected</p>
-                  <p className="text-[11px]">You will pay PKR {grandTotal.toLocaleString()} in cash to the Leopard/TCS courier rider upon delivery to your address in {city}.</p>
-                </div>
-              )}
+              <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/25 text-[11px] text-emerald-300 flex items-start gap-2">
+                <ShieldCheck className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>
+                  Your order will be recorded with payment status <strong>pending</strong>.
+                  You pay in cash only when the parcel reaches your doorstep.
+                </span>
+              </div>
 
-              <div className="flex gap-3">
+              <div className="flex gap-2">
                 <button
-                  type="button"
                   onClick={() => setStep('details')}
-                  className={`px-4 py-3 rounded-2xl border font-bold text-xs ${
-                    isDarkMode ? 'border-slate-800 text-slate-400 hover:text-white' : 'border-slate-200 text-slate-600 hover:text-slate-900'
-                  }`}
+                  disabled={submitting}
+                  className="px-5 py-3.5 rounded-2xl bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs"
                 >
-                  Back
+                  ← Back
                 </button>
-
                 <button
-                  type="button"
                   onClick={handleConfirmOrder}
-                  className="flex-1 py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 dark:bg-emerald-500 dark:hover:bg-emerald-400 text-white dark:text-slate-950 font-extrabold text-xs flex items-center justify-center gap-2 cursor-pointer shadow-lg transition"
+                  disabled={submitting}
+                  className="flex-1 py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs shadow-lg transition cursor-pointer disabled:opacity-60 flex items-center justify-center gap-2"
                 >
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Confirm & Place Order (PKR {grandTotal.toLocaleString()})</span>
+                  {submitting && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {submitting ? 'Placing Order…' : `Confirm Order — PKR ${grandTotal.toLocaleString()}`}
                 </button>
               </div>
             </div>
           )}
 
-          {step === 'success' && placedOrder && (
-            <div className="text-center py-6 space-y-4">
-              <div className="w-16 h-16 rounded-full bg-emerald-500/20 text-emerald-500 border border-emerald-500/30 flex items-center justify-center mx-auto text-2xl">
-                <CheckCircle2 className="w-8 h-8 text-emerald-500" />
+          {step === 'success' && (
+            <div className="text-center space-y-4 py-8">
+              <div className="w-16 h-16 rounded-full bg-emerald-500/15 border border-emerald-500/40 flex items-center justify-center mx-auto">
+                <CheckCircle2 className="w-9 h-9 text-emerald-500" />
               </div>
-
-              <div>
-                <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-mono font-bold">
-                  Order ID: {placedOrder.id}
-                </span>
-                <h3 className="text-2xl font-black mt-2">Order Confirmed!</h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto mt-1">
-                  Thank you, {placedOrder.userName}! Your order has been transmitted directly to the merchant. You will receive an SMS confirmation on {placedOrder.userPhone}.
-                </p>
-              </div>
-
-              <div className={`p-4 rounded-2xl border text-left text-xs max-w-md mx-auto space-y-2 ${
-                isDarkMode ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'
-              }`}>
-                <div className="flex justify-between font-bold border-b border-slate-200 dark:border-slate-800 pb-2">
-                  <span>Shipping Address:</span>
-                  <span className="text-slate-400 font-normal">{placedOrder.city}</span>
-                </div>
-                <p className="text-slate-500 dark:text-slate-300 text-[11px]">{placedOrder.address}</p>
-
-                <div className="flex justify-between font-bold pt-2 border-t border-slate-200 dark:border-slate-800">
-                  <span>Payment Method:</span>
-                  <span className="text-emerald-500 uppercase font-extrabold">{placedOrder.paymentMethod}</span>
-                </div>
-              </div>
-
+              <h3 className="text-xl font-black">Order Placed Successfully!</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto leading-relaxed">
+                Your order has been saved with payment status <strong>pending</strong> (Cash on Delivery).
+                The merchant will confirm and dispatch it soon. You can track it anytime in Account Settings → My Orders.
+              </p>
               <button
-                onClick={onClose}
-                className="px-6 py-3 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs cursor-pointer shadow transition"
+                onClick={() => {
+                  setStep('details');
+                  onClose();
+                }}
+                className="px-6 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs"
               >
-                Close & Return to BizNest
+                Continue Shopping
               </button>
             </div>
           )}

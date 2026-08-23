@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Scale, ShieldCheck, Star, Clock, MapPin, MessageCircle } from 'lucide-react';
+import { X, Scale, MessageCircle } from 'lucide-react';
 import { Business } from '../types';
 
 interface CompareModalProps {
@@ -86,19 +86,19 @@ export const CompareModal: React.FC<CompareModalProps> = ({
               </thead>
               <tbody className="divide-y divide-slate-800/60 text-xs">
                 <tr>
-                  <td className="p-3 font-bold text-slate-400">Trust Score</td>
+                  <td className="p-3 font-bold text-slate-400">Profile Views</td>
                   {businesses.map((b) => (
-                    <td key={b.id} className="p-3 font-mono font-black text-emerald-400 text-sm">
-                      {b.trustScore}%
+                    <td key={b.id} className="p-3 font-mono font-black text-cyan-400 text-sm">
+                      {(b.viewsCount || 0).toLocaleString()}
                     </td>
                   ))}
                 </tr>
 
                 <tr>
-                  <td className="p-3 font-bold text-slate-400">Response Speed</td>
+                  <td className="p-3 font-bold text-slate-400">Total Reviews</td>
                   {businesses.map((b) => (
                     <td key={b.id} className="p-3 font-semibold text-amber-400">
-                      {b.responseTime}
+                      {b.reviewCount || 0}
                     </td>
                   ))}
                 </tr>
@@ -131,7 +131,11 @@ export const CompareModal: React.FC<CompareModalProps> = ({
                   <td className="p-3 font-bold text-slate-400">User Rating</td>
                   {businesses.map((b) => (
                     <td key={b.id} className="p-3 font-bold text-yellow-400">
-                      ★ {b.rating} ({b.reviewCount} reviews)
+                      {b.reviewCount > 0 ? (
+                        <>★ {b.rating.toFixed(1)} ({b.reviewCount} reviews)</>
+                      ) : (
+                        <span className="text-slate-500 font-normal">No reviews yet</span>
+                      )}
                     </td>
                   ))}
                 </tr>
@@ -140,7 +144,7 @@ export const CompareModal: React.FC<CompareModalProps> = ({
                   <td className="p-3 font-bold text-slate-400">Price Tier</td>
                   {businesses.map((b) => (
                     <td key={b.id} className="p-3 font-semibold text-white">
-                      {b.priceRange}
+                      {b.priceRange || '—'}
                     </td>
                   ))}
                 </tr>
@@ -149,15 +153,19 @@ export const CompareModal: React.FC<CompareModalProps> = ({
                   <td className="p-3 font-bold text-slate-400">Action</td>
                   {businesses.map((b) => (
                     <td key={b.id} className="p-3">
-                      <a
-                        href={`https://wa.me/${b.whatsapp.replace(/[^0-9]/g, '')}?text=Hi%20${encodeURIComponent(b.name)},%20I%20found%20you%20on%20BizNest.`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-500 text-slate-950 font-bold text-xs"
-                      >
-                        <MessageCircle className="w-3.5 h-3.5" />
-                        <span>Chat WhatsApp</span>
-                      </a>
+                      {b.whatsapp ? (
+                        <a
+                          href={`https://wa.me/${b.whatsapp.replace(/[^0-9]/g, '')}?text=Hi%20${encodeURIComponent(b.name)},%20I%20found%20you%20on%20BizNest.`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-500 text-slate-950 font-bold text-xs"
+                        >
+                          <MessageCircle className="w-3.5 h-3.5" />
+                          <span>Chat WhatsApp</span>
+                        </a>
+                      ) : (
+                        <span className="text-slate-500 text-xs">No WhatsApp listed</span>
+                      )}
                     </td>
                   ))}
                 </tr>

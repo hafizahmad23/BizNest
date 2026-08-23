@@ -38,14 +38,14 @@ export const SEOHead: React.FC<SEOHeadProps> = ({
   let pageUrl = canonicalUrl || defaultDomain;
 
   if (business) {
-    // Specific Business Profile SEO
+    // Specific Business Profile SEO — Task 11.2 format
     const bizCategory = business.category;
     const bizCity = business.city;
-    pageTitle = `${business.name} - ${bizCategory} in ${bizCity}, Pakistan | BizNest Verified`;
-    
+    pageTitle = `${business.name} — ${bizCategory} in ${bizCity} | BizNest Pakistan`;
+
     pageDesc = business.description
-      ? `${business.name} is a top-rated ${bizCategory} in ${bizCity}, Pakistan. ${business.tagline || ''} Rating: ${business.rating}★ (${business.reviewCount} reviews). Contact: ${business.phone}.`.trim()
-      : `${business.name} - Premier ${bizCategory} located in ${bizCity}, Pakistan. Find verified contact numbers, pricing, reviews, and services on BizNest.`;
+      ? `${business.name} is a ${bizCategory} in ${bizCity}, Pakistan. ${business.tagline || ''} ${business.reviewCount > 0 ? `Rating: ${business.rating.toFixed(1)}★ (${business.reviewCount} reviews).` : ''} Contact: ${business.phone}.`.trim()
+      : `${business.name} — ${bizCategory} located in ${bizCity}, Pakistan. Find contact numbers, pricing, reviews, and services on BizNest.`;
     
     pageKeywords = [
       business.name,
@@ -64,8 +64,8 @@ export const SEOHead: React.FC<SEOHeadProps> = ({
     pageUrl = `${defaultDomain}/?business=${business.id}`;
   } else if (category && category !== 'all' && city && city !== 'all') {
     // Combined Category + City filter SEO
-    pageTitle = `Top ${category} Services in ${city}, Pakistan | BizNest Verified Listings`;
-    pageDesc = `Discover and connect with top-rated ${category} in ${city}, Pakistan. Compare trust scores, response times, client reviews, and direct WhatsApp contact on BizNest.`;
+    pageTitle = `Top ${category} Services in ${city}, Pakistan | BizNest Listings`;
+    pageDesc = `Discover and connect with local ${category} in ${city}, Pakistan. Compare real customer reviews, ratings, and direct WhatsApp contact on BizNest.`;
     pageKeywords = [category, city, `${category} in ${city}`, `best ${category} ${city}`, 'Pakistan directory'];
     pageUrl = `${defaultDomain}/?category=${encodeURIComponent(category)}&city=${encodeURIComponent(city)}`;
   } else if (category && category !== 'all') {
@@ -82,7 +82,7 @@ export const SEOHead: React.FC<SEOHeadProps> = ({
     pageUrl = `${defaultDomain}/?city=${encodeURIComponent(city)}`;
   } else if (currentView === 'dashboard') {
     pageTitle = `Merchant Control Center & AI Assistant | BizNest Dashboard`;
-    pageDesc = `Manage business listings in Pakistan, view customer lead inquiries, track trust scores, and write SEO descriptions with 1-Click Gemini AI.`;
+    pageDesc = `Manage business listings in Pakistan, view customer lead inquiries, track real profile views, and write SEO descriptions with 1-click Gemini AI.`;
   } else if (currentView === 'admin') {
     pageTitle = `Platform Admin Verification Portal | BizNest Pakistan`;
     pageDesc = `Admin management portal for approving, auditing, and verifying business listings across Pakistan.`;
@@ -91,12 +91,12 @@ export const SEOHead: React.FC<SEOHeadProps> = ({
     pageDesc = `Grow your Pakistani business with BizNest Merchant Premium. List across Pakistan, receive direct lead inquiries, and get verified badge status.`;
   }
 
-  // Fallback defaults
+  // Fallback defaults — Task 11.1 exact strings
   if (!pageTitle) {
-    pageTitle = `BizNest Pakistan | Verified Business Directory & AI Ecosystem`;
+    pageTitle = 'BizNest Pakistan — Discover Local Businesses & Services Across Pakistan';
   }
   if (!pageDesc) {
-    pageDesc = `Pakistan's premier digital business discovery and ecosystem platform. Explore verified nurseries, restaurants, doctors, lawyers, and service providers across Lahore, Karachi, Islamabad, and beyond.`;
+    pageDesc = 'Find and review local businesses, shops, restaurants, and services across Pakistan.';
   }
 
   const defaultKeywordsList = [
@@ -132,7 +132,7 @@ export const SEOHead: React.FC<SEOHeadProps> = ({
       '@type': 'LocalBusiness',
       'name': business.name,
       'description': business.description || business.tagline,
-      'image': [business.coverImage, business.logoImage],
+      'image': [business.coverImage, business.logoImage].filter(Boolean),
       'telephone': business.phone,
       'email': business.email,
       'priceRange': business.priceRange || '$$',
@@ -142,13 +142,18 @@ export const SEOHead: React.FC<SEOHeadProps> = ({
         'addressCountry': 'PK',
         'streetAddress': business.address
       },
-      'aggregateRating': {
-        '@type': 'AggregateRating',
-        'ratingValue': business.rating || 5.0,
-        'reviewCount': business.reviewCount || 1,
-        'bestRating': '5',
-        'worstRating': '1'
-      }
+      // Only publish structured ratings when REAL reviews exist
+      ...(business.reviewCount > 0
+        ? {
+            'aggregateRating': {
+              '@type': 'AggregateRating',
+              'ratingValue': business.rating,
+              'reviewCount': business.reviewCount,
+              'bestRating': '5',
+              'worstRating': '1'
+            }
+          }
+        : {})
     };
   }
 

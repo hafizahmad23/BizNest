@@ -15,13 +15,6 @@ export interface RecentSearchItem {
   timestamp: string;
 }
 
-const DEFAULT_RECENT_SEARCHES: RecentSearchItem[] = [
-  { id: 'rs-1', query: 'Green Flora Nursery', category: 'Nursery', city: 'Lahore', timestamp: '5 mins ago' },
-  { id: 'rs-2', query: 'Monal Rooftop', category: 'Restaurant', city: 'Islamabad', timestamp: '1 hour ago' },
-  { id: 'rs-3', query: 'Electrician Services', category: 'Electrician', city: 'Karachi', timestamp: 'Yesterday' },
-  { id: 'rs-4', query: 'Commercial Office Space', category: 'Real Estate', city: 'Faisalabad', timestamp: '2 days ago' }
-];
-
 interface HeroProps {
   onSearch?: (query: string, category: string, city: string, verifiedOnly: boolean) => void;
   onOpenAiMatchmaker?: () => void;
@@ -58,21 +51,19 @@ export const Hero: React.FC<HeroProps> = ({
 
   const searchContainerRef = useRef<HTMLDivElement>(null);
 
-  // Load recent searches from LocalStorage
+  // Load recent searches from LocalStorage (the user's OWN history only —
+  // no fabricated default searches are injected)
   useEffect(() => {
     try {
       const stored = localStorage.getItem('biznest_recent_searches');
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) {
+        if (Array.isArray(parsed)) {
           setRecentSearches(parsed);
-          return;
         }
       }
-      setRecentSearches(DEFAULT_RECENT_SEARCHES);
     } catch (e) {
       console.warn('Failed to load recent searches:', e);
-      setRecentSearches(DEFAULT_RECENT_SEARCHES);
     }
   }, []);
 
@@ -156,12 +147,12 @@ export const Hero: React.FC<HeroProps> = ({
   };
 
   const QUICK_TAGS = [
-    { label: '🌿 Nursery', value: 'Nursery' },
-    { label: '🍽 Restaurant', value: 'Restaurant' },
-    { label: '👨‍⚕️ Doctor', value: 'Doctor' },
-    { label: '🧰 Electrician', value: 'Electrician' },
-    { label: '🏠 Real Estate', value: 'Real Estate' },
-    { label: '👨‍💻 Freelancer', value: 'Freelancer' }
+    { label: '🌿 Nursery', value: 'Botanical & Nursery' },
+    { label: '🍽 Restaurants', value: 'Restaurants & Cafes' },
+    { label: '👨‍⚕️ Doctors', value: 'Doctors & Clinics' },
+    { label: '🧰 Electricians', value: 'Electricians & Solar' },
+    { label: '🏠 Real Estate', value: 'Real Estate & Plots' },
+    { label: '👨‍💻 Software', value: 'Software & Freelancers' }
   ];
 
   return (
@@ -181,7 +172,7 @@ export const Hero: React.FC<HeroProps> = ({
           className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 text-xs font-semibold mb-6 shadow-sm"
         >
           <Sparkles className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-          <span>Pakistan’s #1 Digital Business Ecosystem</span>
+          <span>Pakistan’s Growing Business Directory</span>
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
         </motion.div>
 
@@ -207,7 +198,7 @@ export const Hero: React.FC<HeroProps> = ({
             isDarkMode ? 'text-slate-300' : 'text-slate-600'
           }`}
         >
-          Everything Your Business Needs, In One Place. Search thousands of verified nurseries, restaurants, doctors, lawyers, freelancers & real estate partners across Pakistan.
+          Everything Your Business Needs, In One Place. Search local nurseries, restaurants, doctors, lawyers, freelancers & real estate partners across Pakistan.
         </motion.p>
 
         {/* Search Container Box */}
@@ -236,7 +227,7 @@ export const Hero: React.FC<HeroProps> = ({
                   value={query}
                   onChange={(e) => { setQuery(e.target.value); setShowSuggestions(true); }}
                   onFocus={() => setShowSuggestions(true)}
-                  placeholder="Search business, e.g. 'Green Flora Nursery Lahore' or 'Doctor'..."
+                  placeholder="Search a business, category, or city — e.g. 'Plumber in Lahore'..."
                   className={`w-full pl-11 pr-4 py-3 rounded-xl text-sm font-medium focus:outline-none transition ${
                     isDarkMode
                       ? 'bg-slate-950/80 text-white placeholder-slate-500 border border-slate-800 focus:border-emerald-500/50'
@@ -399,7 +390,6 @@ export const Hero: React.FC<HeroProps> = ({
                               <Tag className="w-3.5 h-3.5 text-emerald-500" />
                               <span>Category: <strong>{cat.name}</strong></span>
                             </span>
-                            <span className="text-[10px] text-slate-500">{cat.count} listings</span>
                           </button>
                         ))}
                         {PAKISTAN_CITIES.filter(c => c.name.toLowerCase().includes(query.toLowerCase())).slice(0, 3).map(c => (
@@ -417,7 +407,6 @@ export const Hero: React.FC<HeroProps> = ({
                               <MapPin className="w-3.5 h-3.5 text-cyan-500" />
                               <span>City: <strong>{c.name}</strong></span>
                             </span>
-                            <span className="text-[10px] text-slate-500">{c.businessCount} businesses</span>
                           </button>
                         ))}
                         <button
