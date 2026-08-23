@@ -161,8 +161,8 @@ export const WelcomeAuthScreen: React.FC<WelcomeAuthScreenProps> = ({
       return;
     }
 
-    if (!signupPassword || signupPassword.length < 6) {
-      setSignupError('Password must be at least 6 characters long.');
+    if (!signupPassword || signupPassword.length < 8) {
+      setSignupError('Password must be at least 8 characters long.');
       return;
     }
 
@@ -729,7 +729,7 @@ export const WelcomeAuthScreen: React.FC<WelcomeAuthScreenProps> = ({
                         required
                         value={signupPassword}
                         onChange={(e) => setSignupPassword(e.target.value)}
-                        placeholder="At least 6 characters"
+                        placeholder="At least 8 characters"
                         className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-xs text-white focus:outline-none focus:border-emerald-500"
                       />
                       <button

@@ -180,6 +180,21 @@ export const Navbar: React.FC<NavbarProps> = ({
             Contact
           </button>
 
+          {/* Admin link — visible ONLY to real admins (profiles.role === 'admin') */}
+          {currentUser?.role === 'admin' && (
+            <button
+              onClick={() => onNavigate('admin')}
+              className={`flex items-center gap-1 px-3 py-1.5 rounded-xl transition-all duration-200 text-xs font-semibold border ${
+                activeView === 'admin'
+                  ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
+                  : 'text-slate-400 hover:text-purple-300 border-transparent hover:bg-purple-500/10'
+              }`}
+            >
+              <ShieldAlert className="w-3.5 h-3.5" />
+              <span>Admin</span>
+            </button>
+          )}
+
           {/* AI Assistant Button */}
           <button
             onClick={onOpenAiMatchmaker}
@@ -385,9 +400,13 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </div>
                 <span className="max-w-[80px] truncate">{currentUser.name}</span>
                 <span className={`px-1.5 py-0.2 rounded text-[9px] uppercase font-mono ${
-                  currentUser.role === 'business' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-blue-500/20 text-blue-400'
+                  currentUser.role === 'admin'
+                    ? 'bg-purple-500/20 text-purple-400'
+                    : currentUser.role === 'business'
+                      ? 'bg-emerald-500/20 text-emerald-400'
+                      : 'bg-blue-500/20 text-blue-400'
                 }`}>
-                  {currentUser.role === 'business' ? 'Biz' : 'User'}
+                  {currentUser.role === 'admin' ? 'Admin' : currentUser.role === 'business' ? 'Biz' : 'User'}
                 </span>
               </button>
 
@@ -469,10 +488,10 @@ export const Navbar: React.FC<NavbarProps> = ({
             onClick={() => {
               if (!currentUser) {
                 onOpenAuth();
-              } else if (currentUser.role !== 'business') {
-                onOpenSettings();
-              } else {
+              } else if (currentUser.role === 'business' || currentUser.role === 'admin') {
                 onNavigate('dashboard');
+              } else {
+                onOpenSettings();
               }
             }}
             className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-slate-950 font-extrabold text-xs shadow-md transition transform hover:-translate-y-0.5 cursor-pointer"
@@ -592,7 +611,17 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             Contact Support Desk
           </button>
-          
+
+          {currentUser?.role === 'admin' && (
+            <button
+              onClick={() => { onNavigate('admin'); setMobileMenuOpen(false); }}
+              className="text-left px-3 py-2 rounded-lg hover:bg-purple-500/10 text-purple-400 font-bold flex items-center gap-2"
+            >
+              <ShieldAlert className="w-4 h-4" />
+              <span>Admin Panel</span>
+            </button>
+          )}
+
           {currentUser ? (
             <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
               <div className="flex items-center justify-between text-xs font-bold">

@@ -1,5 +1,6 @@
-import { supabase } from './supabase';
-import type { User as UserType } from '../types';
+import { supabase, isSupabaseConfigured, DATABASE_NOT_CONFIGURED_ERROR } from './supabase';
+import { fetchProfile, upgradeToBusinessRole, fetchSavedBusinesses, mapProfileToUser } from './supabaseDB';
+import type { User as UserType, ProfileRow } from '../types';
 
 export type AuthResult = {
   success: boolean;
@@ -10,67 +11,75 @@ export type AuthResult = {
 };
 
 /**
- * Convert Supabase's auth user into BizNest's application User model.
- * The role/business fields are intentionally read from user_metadata because
- * they are persisted by Supabase and therefore survive refresh/login.
+ * Build the application User from the Supabase Auth user, using the
+ * `profiles` table row as the ONE authoritative source for the role.
+ *
+ * - Role is NEVER read from user_metadata (a client can tamper with it).
+ * - Role is NEVER read from localStorage.
+ * - If the profile row is missing (e.g. DB not migrated yet), the fallback
+ *   role is safely 'user' — never an elevated role.
  */
-export function mapSupabaseUser(user: any): UserType {
-  const metadata = user?.user_metadata ?? {};
+export async function mapSupabaseUser(authUser: any): Promise<UserType | null> {
+  if (!authUser) return null;
 
+  const { data: profile } = await fetchProfile(authUser.id);
+
+  if (profile) {
+    const { data: saved } = await fetchSavedBusinesses(profile.id);
+    return mapProfileToUser(
+      profile,
+      (saved || []).map((b) => b.id)
+    );
+  }
+
+  // No profile row yet — safe fallback with the lowest privilege.
+  const metadata = authUser?.user_metadata ?? {};
   return {
-    id: user.id,
-    name:
-      metadata.name ||
-      metadata.full_name ||
-      user.email?.split('@')[0] ||
-      'User',
-    email: user.email ?? '',
-    phone: user.phone || metadata.phone || '',
-    role: metadata.role === 'business' ? 'business' : 'user',
-    city: metadata.city || 'Lahore',
-    savedBusinessIds: Array.isArray(metadata.savedBusinessIds)
-      ? metadata.savedBusinessIds
-      : [],
-    businessName: metadata.businessName || undefined,
-    businessId: metadata.businessId || undefined,
-    createdAt: user.created_at
-      ? user.created_at.split('T')[0]
-      : new Date().toISOString().split('T')[0],
-  } as UserType;
+    id: authUser.id,
+    name: metadata.name || metadata.full_name || authUser.email?.split('@')[0] || 'User',
+    email: authUser.email ?? '',
+    phone: authUser.phone || metadata.phone || undefined,
+    role: 'user', // never trust metadata.role
+    city: metadata.city || undefined,
+    savedBusinessIds: [],
+    createdAt: authUser.created_at || new Date().toISOString(),
+  };
+}
+
+function notConfigured(): AuthResult {
+  return { success: false, error: DATABASE_NOT_CONFIGURED_ERROR };
 }
 
 function readableAuthError(message: string): string {
   const m = message.toLowerCase();
 
   if (m.includes('failed to fetch') || m.includes('networkerror')) {
-    return 'BizNest could not reach Supabase. Check VITE_SUPABASE_URL in the .env file, then restart the development server.';
+    return 'BizNest could not reach Supabase. Check VITE_SUPABASE_URL in your environment, then restart.';
   }
-
   if (m.includes('invalid login credentials')) {
     return 'Incorrect email/phone or password.';
   }
-
   if (m.includes('email not confirmed')) {
     return 'Please verify your email address first, then log in.';
   }
-
   if (m.includes('user already registered')) {
     return 'An account with this email address already exists. Please log in instead.';
   }
-
   if (m.includes('password should be at least')) {
-    return 'Password must be at least 6 characters long.';
+    return 'Password must be at least 8 characters long.';
   }
-
   if (m.includes('rate limit')) {
     return 'Too many attempts. Please wait a little and try again.';
   }
-
   return message;
 }
 
 /* =========================================================
    SIGN UP
+   - Auth account created with (harmless) metadata used by the
+     handle_new_user DB trigger to build the profiles row.
+   - Role 'business' is applied via an awaited profiles update
+     AFTER signup (profiles table is authoritative).
 ========================================================= */
 
 export async function registerWithSupabase(data: {
@@ -83,6 +92,8 @@ export async function registerWithSupabase(data: {
   businessName?: string;
   businessCategory?: string;
 }): Promise<AuthResult> {
+  if (!isSupabaseConfigured) return notConfigured();
+
   const email = data.email.trim().toLowerCase();
 
   const { data: authData, error } = await supabase.auth.signUp({
@@ -92,97 +103,81 @@ export async function registerWithSupabase(data: {
       emailRedirectTo: window.location.origin,
       data: {
         name: data.name.trim(),
+        full_name: data.name.trim(),
         phone: data.phone.trim(),
-        role: data.role,
         city: data.city,
-        businessName: data.businessName?.trim() || '',
-        savedBusinessIds: [],
       },
     },
   });
 
   if (error) {
-    return {
-      success: false,
-      error: readableAuthError(error.message),
-    };
+    return { success: false, error: readableAuthError(error.message) };
   }
 
   if (!authData.user) {
-    return {
-      success: false,
-      error: 'Account could not be created.',
-    };
+    return { success: false, error: 'Account could not be created.' };
   }
-
-  const user = mapSupabaseUser(authData.user);
 
   if (!authData.session) {
     return {
       success: true,
-      user,
       needsEmailConfirmation: true,
       message:
         'Account created successfully. Please check your email and verify your account before logging in.',
     };
   }
 
-  return {
-    success: true,
-    user,
-  };
+  // Applying a requested business role is a real awaited DB write on the
+  // profiles table (the trigger may need a moment to create the row first).
+  if (data.role === 'business') {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const res = await upgradeToBusinessRole();
+      if (!res.error) break;
+      await new Promise((r) => setTimeout(r, 600));
+    }
+  }
+
+  const user = await mapSupabaseUser(authData.user);
+  if (!user) return { success: false, error: 'Account could not be loaded.' };
+
+  return { success: true, user };
 }
 
 /* =========================================================
-   LOGIN WITH EMAIL + PASSWORD
+   LOGIN — EMAIL + PASSWORD
 ========================================================= */
 
 export async function loginWithSupabaseEmail(
   email: string,
   password: string
 ): Promise<AuthResult> {
-  const cleanEmail = email.trim().toLowerCase();
+  if (!isSupabaseConfigured) return notConfigured();
 
   const { data, error } = await supabase.auth.signInWithPassword({
-    email: cleanEmail,
+    email: email.trim().toLowerCase(),
     password,
   });
 
-  if (error) {
-    return {
-      success: false,
-      error: readableAuthError(error.message),
-    };
-  }
+  if (error) return { success: false, error: readableAuthError(error.message) };
+  if (!data.user) return { success: false, error: 'Login failed.' };
 
-  if (!data.user) {
-    return {
-      success: false,
-      error: 'Login failed.',
-    };
-  }
-
-  return {
-    success: true,
-    user: mapSupabaseUser(data.user),
-  };
+  const user = await mapSupabaseUser(data.user);
+  return { success: true, user: user ?? undefined };
 }
 
 /* =========================================================
-   LOGIN WITH PHONE + PASSWORD
+   LOGIN — PHONE + PASSWORD
 ========================================================= */
 
 export async function loginWithSupabasePhone(
   phone: string,
   password: string
 ): Promise<AuthResult> {
-  const cleanPhone = phone.trim();
+  if (!isSupabaseConfigured) return notConfigured();
 
+  const cleanPhone = phone.trim();
   if (!cleanPhone) {
-    return {
-      success: false,
-      error: 'Please enter your phone number.',
-    };
+    return { success: false, error: 'Please enter your phone number.' };
   }
 
   const { data, error } = await supabase.auth.signInWithPassword({
@@ -190,24 +185,11 @@ export async function loginWithSupabasePhone(
     password,
   });
 
-  if (error) {
-    return {
-      success: false,
-      error: readableAuthError(error.message),
-    };
-  }
+  if (error) return { success: false, error: readableAuthError(error.message) };
+  if (!data.user) return { success: false, error: 'Login failed.' };
 
-  if (!data.user) {
-    return {
-      success: false,
-      error: 'Login failed.',
-    };
-  }
-
-  return {
-    success: true,
-    user: mapSupabaseUser(data.user),
-  };
+  const user = await mapSupabaseUser(data.user);
+  return { success: true, user: user ?? undefined };
 }
 
 /* =========================================================
@@ -215,73 +197,52 @@ export async function loginWithSupabasePhone(
 ========================================================= */
 
 export async function loginWithGoogle(): Promise<AuthResult> {
+  if (!isSupabaseConfigured) return notConfigured();
+
   const { error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
-    options: {
-      redirectTo: window.location.origin,
-    },
+    options: { redirectTo: window.location.origin },
   });
 
-  if (error) {
-    return {
-      success: false,
-      error: error.message,
-    };
-  }
-
-  return {
-    success: true,
-  };
+  if (error) return { success: false, error: error.message };
+  return { success: true };
 }
 
 /* =========================================================
-   FORGOT PASSWORD - SEND REAL EMAIL OTP
+   PASSWORD RESET FLOW
 ========================================================= */
 
 export async function sendPasswordResetCode(email: string): Promise<AuthResult> {
-  const cleanEmail = email.trim().toLowerCase();
+  if (!isSupabaseConfigured) return notConfigured();
 
+  const cleanEmail = email.trim().toLowerCase();
   if (!cleanEmail) {
-    return {
-      success: false,
-      error: 'Please enter your email address.',
-    };
+    return { success: false, error: 'Please enter your email address.' };
   }
 
   const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
     redirectTo: `${window.location.origin}/reset-password`,
   });
 
-  if (error) {
-    return {
-      success: false,
-      error: readableAuthError(error.message),
-    };
-  }
+  if (error) return { success: false, error: readableAuthError(error.message) };
 
   return {
     success: true,
-    message:
-      'A password reset email has been sent. Please check your inbox and spam folder.',
+    message: 'A password reset email has been sent. Please check your inbox and spam folder.',
   };
 }
-
-/* =========================================================
-   FORGOT PASSWORD - VERIFY OTP
-========================================================= */
 
 export async function verifyPasswordResetCode(
   email: string,
   code: string
 ): Promise<AuthResult> {
+  if (!isSupabaseConfigured) return notConfigured();
+
   const cleanEmail = email.trim().toLowerCase();
   const cleanCode = code.trim();
 
   if (!cleanEmail || !cleanCode) {
-    return {
-      success: false,
-      error: 'Email and verification code are required.',
-    };
+    return { success: false, error: 'Email and verification code are required.' };
   }
 
   const { data, error } = await supabase.auth.verifyOtp({
@@ -297,132 +258,29 @@ export async function verifyPasswordResetCode(
     };
   }
 
-  if (!data.user) {
-    return {
-      success: false,
-      error: 'Verification failed.',
-    };
-  }
+  if (!data.user) return { success: false, error: 'Verification failed.' };
 
-  return {
-    success: true,
-    user: mapSupabaseUser(data.user),
-  };
+  const user = await mapSupabaseUser(data.user);
+  return { success: true, user: user ?? undefined };
 }
 
-/* =========================================================
-   UPDATE PASSWORD AFTER OTP VERIFICATION
-========================================================= */
+export async function updateSupabasePassword(newPassword: string): Promise<AuthResult> {
+  if (!isSupabaseConfigured) return notConfigured();
 
-export async function updateSupabasePassword(
-  newPassword: string
-): Promise<AuthResult> {
-  if (!newPassword || newPassword.length < 6) {
-    return {
-      success: false,
-      error: 'New password must be at least 6 characters long.',
-    };
+  if (!newPassword || newPassword.length < 8) {
+    return { success: false, error: 'New password must be at least 8 characters long.' };
   }
 
-  const { data, error } = await supabase.auth.updateUser({
-    password: newPassword,
-  });
+  const { data, error } = await supabase.auth.updateUser({ password: newPassword });
 
-  if (error) {
-    return {
-      success: false,
-      error: readableAuthError(error.message),
-    };
-  }
+  if (error) return { success: false, error: readableAuthError(error.message) };
 
-  return {
-    success: true,
-    user: data.user ? mapSupabaseUser(data.user) : undefined,
-    message: 'Password updated successfully.',
-  };
+  const user = data.user ? await mapSupabaseUser(data.user) : undefined;
+  return { success: true, user: user ?? undefined, message: 'Password updated successfully.' };
 }
-
-/* =========================================================
-   UPDATE USER PROFILE / ACCOUNT ROLE
-
-   This is the critical persistence fix:
-   Business upgrades are written to Supabase user_metadata, not only
-   browser localStorage. The metadata survives refresh and future logins.
-========================================================= */
-
-export async function updateSupabaseUserMetadata(
-  updates: Record<string, unknown>
-): Promise<AuthResult> {
-  const {
-    data: { user: currentUser },
-    error: getUserError,
-  } = await supabase.auth.getUser();
-
-  if (getUserError) {
-    return {
-      success: false,
-      error: readableAuthError(getUserError.message),
-    };
-  }
-
-  if (!currentUser) {
-    return {
-      success: false,
-      error: 'You are not currently signed in.',
-    };
-  }
-
-  const currentMetadata = currentUser.user_metadata ?? {};
-
-  const { data, error } = await supabase.auth.updateUser({
-    data: {
-      ...currentMetadata,
-      ...updates,
-    },
-  });
-
-  if (error) {
-    return {
-      success: false,
-      error: readableAuthError(error.message),
-    };
-  }
-
-  if (!data.user) {
-    return {
-      success: false,
-      error: 'Account details could not be updated.',
-    };
-  }
-
-  return {
-    success: true,
-    user: mapSupabaseUser(data.user),
-  };
-}
-
-/* =========================================================
-   STANDARD SUPABASE RESET LINK
-========================================================= */
 
 export async function sendPasswordResetEmail(email: string): Promise<AuthResult> {
-  const cleanEmail = email.trim().toLowerCase();
-
-  const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
-    redirectTo: `${window.location.origin}/reset-password`,
-  });
-
-  if (error) {
-    return {
-      success: false,
-      error: readableAuthError(error.message),
-    };
-  }
-
-  return {
-    success: true,
-    message: 'A password reset email has been sent.',
-  };
+  return sendPasswordResetCode(email);
 }
 
 /* =========================================================
@@ -430,49 +288,51 @@ export async function sendPasswordResetEmail(email: string): Promise<AuthResult>
 ========================================================= */
 
 export async function logoutFromSupabase(): Promise<AuthResult> {
+  if (!isSupabaseConfigured) return notConfigured();
+
   const { error } = await supabase.auth.signOut();
-
-  if (error) {
-    return {
-      success: false,
-      error: error.message,
-    };
-  }
-
-  return {
-    success: true,
-  };
+  if (error) return { success: false, error: error.message };
+  return { success: true };
 }
 
 /* =========================================================
-   CURRENT USER
+   CURRENT USER (session restore)
 ========================================================= */
 
 export async function getCurrentSupabaseUser(): Promise<UserType | null> {
+  if (!isSupabaseConfigured) return null;
+
   const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser();
+    data: { session },
+  } = await supabase.auth.getSession();
 
-  if (error || !user) {
-    return null;
-  }
-
-  return mapSupabaseUser(user);
+  if (!session?.user) return null;
+  return mapSupabaseUser(session.user);
 }
 
 /* =========================================================
    AUTH STATE LISTENER
-
-   Keeps React synchronized with Supabase across login, logout,
-   token refresh, browser restore, OAuth callback, etc.
+   Emits the full profile-backed User (role from profiles table)
+   on SIGNED_IN / SIGNED_OUT / TOKEN_REFRESHED events.
 ========================================================= */
 
 export function subscribeToSupabaseAuthChanges(
-  onUserChange: (user: UserType | null) => void
+  onUserChange: (user: UserType | null, event: string) => void
 ): () => void {
-  const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-    onUserChange(session?.user ? mapSupabaseUser(session.user) : null);
+  const { data } = supabase.auth.onAuthStateChange((event, session) => {
+    if (event === 'SIGNED_OUT' || !session?.user) {
+      onUserChange(null, event);
+      return;
+    }
+
+    if (event === 'TOKEN_REFRESHED') {
+      // Keep current state; nothing needs to be re-fetched.
+      return;
+    }
+
+    void mapSupabaseUser(session.user).then((user) => {
+      onUserChange(user, event);
+    });
   });
 
   return () => {

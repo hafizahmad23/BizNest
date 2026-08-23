@@ -1,10 +1,13 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { 
-  Sprout, Utensils, Coffee, Hotel, Hospital, ShoppingBag, Stethoscope, 
-  Laptop, Wrench, Home, GraduationCap, Scissors, Camera, Scale, Dumbbell, Car, ArrowRight
+import {
+  Sprout, Utensils, Coffee, Hotel, Hospital, ShoppingBag, Stethoscope,
+  Laptop, Wrench, Home, GraduationCap, Scissors, Camera, Scale, Dumbbell, Car,
+  Zap, Droplets, Building2
 } from 'lucide-react';
 import { POPULAR_CATEGORIES } from '../data/mockData';
+import { fetchCategories } from '../lib/supabaseDB';
+import { CategoryItem } from '../types';
 
 interface CategoryGridProps {
   onSelectCategory: (categoryName: string) => void;
@@ -14,14 +17,42 @@ interface CategoryGridProps {
 
 const ICON_MAP: Record<string, React.ElementType> = {
   Sprout, Utensils, Coffee, Hotel, Hospital, ShoppingBag, Stethoscope,
-  Laptop, Wrench, Home, GraduationCap, Scissors, Camera, Scale, Dumbbell, Car
+  Laptop, Wrench, Home, GraduationCap, Scissors, Camera, Scale, Dumbbell, Car,
+  Zap, Droplets, Building2
 };
 
+/**
+ * Category grid — definitions from the DB categories table (seeded to match
+ * the 16 canonical categories) with REAL active-business counts.
+ * A category with 0 businesses honestly shows 0.
+ */
 export const CategoryGrid: React.FC<CategoryGridProps> = ({
   onSelectCategory,
   selectedCategory,
   isDarkMode
 }) => {
+  const [categories, setCategories] = useState<CategoryItem[]>(POPULAR_CATEGORIES);
+
+  useEffect(() => {
+    let active = true;
+    fetchCategories().then(({ data, error }) => {
+      if (!active || error || !data) return;
+
+      // Merge real DB counts onto the local definitions (matched by slug).
+      setCategories(
+        POPULAR_CATEGORIES.map((local) => {
+          const dbCat = data.find((d) => d.slug === local.slug || d.name === local.name);
+          return dbCat
+            ? { ...local, id: dbCat.id, count: dbCat.count, iconName: dbCat.iconName || local.iconName }
+            : local;
+        })
+      );
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   return (
     <section className="py-12 px-4 sm:px-8 max-w-7xl mx-auto">
       {/* Section Header */}
@@ -36,7 +67,7 @@ export const CategoryGrid: React.FC<CategoryGridProps> = ({
             Popular Business Categories
           </h2>
           <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
-            Explore 200+ specialized sectors. Select a category to discover verified providers near you.
+            Explore specialized sectors across Pakistan. Select a category to discover providers near you.
           </p>
         </div>
 
@@ -52,13 +83,13 @@ export const CategoryGrid: React.FC<CategoryGridProps> = ({
 
       {/* Grid of Categories */}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-8 gap-3.5">
-        {POPULAR_CATEGORIES.map((cat, idx) => {
-          const IconComponent = ICON_MAP[cat.iconName] || Sprout;
+        {categories.map((cat, idx) => {
+          const IconComponent = ICON_MAP[cat.iconName] || Building2;
           const isSelected = selectedCategory.toLowerCase() === cat.name.toLowerCase();
 
           return (
             <motion.button
-              key={cat.id}
+              key={cat.slug || cat.id}
               initial={{ scale: 0.95, opacity: 0 }}
               whileInView={{ scale: 1, opacity: 1 }}
               viewport={{ once: true }}
@@ -76,15 +107,15 @@ export const CategoryGrid: React.FC<CategoryGridProps> = ({
             >
               <div className="flex items-center justify-between mb-3 w-full">
                 <div className={`p-2.5 rounded-xl transition-all duration-300 ${
-                  isSelected 
-                    ? 'bg-emerald-600 dark:bg-emerald-500 text-white dark:text-slate-950 shadow-sm' 
+                  isSelected
+                    ? 'bg-emerald-600 dark:bg-emerald-500 text-white dark:text-slate-950 shadow-sm'
                     : 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 group-hover:bg-emerald-600 group-hover:text-white dark:group-hover:bg-emerald-500 dark:group-hover:text-slate-950'
                 }`}>
                   <IconComponent className="w-5 h-5" />
                 </div>
                 <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
-                  isSelected 
-                    ? 'bg-emerald-200 dark:bg-emerald-500/30 text-emerald-800 dark:text-emerald-300' 
+                  isSelected
+                    ? 'bg-emerald-200 dark:bg-emerald-500/30 text-emerald-800 dark:text-emerald-300'
                     : 'bg-slate-100 dark:bg-slate-800/60 text-slate-600 dark:text-slate-400'
                 }`}>
                   {cat.count}

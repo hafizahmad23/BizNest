@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Sparkles, Send, Bot, ArrowRight, Building2 } from 'lucide-react';
+import { X, Sparkles, Send, Bot, ArrowRight, Building2, Star } from 'lucide-react';
 import { Business } from '../types';
 
 interface AiMatchmakerModalProps {
@@ -18,51 +18,79 @@ export const AiMatchmakerModal: React.FC<AiMatchmakerModalProps> = ({
   onSelectBusiness,
   isDarkMode
 }) => {
-  if (!isOpen) return null;
-
   const [prompt, setPrompt] = useState('');
   const [loading, setLoading] = useState(false);
   const [reasoning, setReasoning] = useState<string | null>(null);
   const [matchedList, setMatchedList] = useState<Business[]>([]);
+  const [matchError, setMatchError] = useState('');
+
+  if (!isOpen) return null;
 
   const handleMatch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!prompt.trim()) return;
+    if (!prompt.trim() || loading) return;
 
     setLoading(true);
     setReasoning(null);
     setMatchedList([]);
+    setMatchError('');
 
     try {
       const res = await fetch('/api/gemini/matchmaker', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userPrompt: prompt })
+        body: JSON.stringify({
+          userPrompt: prompt,
+          // Send a compact summary of the REAL directory so Gemini only picks
+          // from businesses that actually exist in Supabase.
+          businesses: allBusinesses.map((b) => ({
+            id: b.id,
+            name: b.name,
+            category: b.category,
+            city: b.city,
+            tagline: b.tagline,
+            description: (b.description || '').slice(0, 280),
+            rating: b.rating,
+            reviewCount: b.reviewCount,
+            isVerified: b.isVerified,
+          })),
+        })
       });
 
-      const data = await res.json();
-      setReasoning(data.matchReasoning || 'Here are our top recommended business partners based on your requirements.');
+      const data = await res.json().catch(() => null);
 
-      if (data.matchedBusinessIds && Array.isArray(data.matchedBusinessIds)) {
-        const matches = allBusinesses.filter(b => data.matchedBusinessIds.includes(b.id));
-        setMatchedList(matches.length > 0 ? matches : [allBusinesses[0]]);
-      } else {
-        setMatchedList([allBusinesses[0]]);
+      if (!res.ok || !data) {
+        setMatchError(data?.error || 'AI Matchmaker is unavailable right now. Please try again.');
+        return;
       }
-    } catch (err) {
-      console.error(err);
-      setReasoning('Here are top verified matches from our network.');
-      setMatchedList([allBusinesses[0]]);
+
+      setReasoning(data.matchReasoning || null);
+
+      const matches =
+        data.matchedBusinessIds && Array.isArray(data.matchedBusinessIds)
+          ? allBusinesses.filter((b) => data.matchedBusinessIds.includes(b.id))
+          : [];
+
+      setMatchedList(matches);
+      if (matches.length === 0) {
+        setMatchError(
+          allBusinesses.length === 0
+            ? 'No businesses are listed yet, so the AI has nothing to match against. Be the first to join BizNest Pakistan!'
+            : 'No listed businesses matched your request yet. Try a broader query or check back soon as new businesses join.'
+        );
+      }
+    } catch {
+      setMatchError('Network error — could not reach the AI service. Please check your connection and try again.');
     } finally {
       setLoading(false);
     }
   };
 
   const SAMPLE_PROMPTS = [
-    "Find me an exotic plant nursery in Lahore DHA Phase 5 with under 10 min response time",
-    "Best Rooftop Shinwari Karahi restaurant in Islamabad Margalla Hills",
-    "Certified software agency in Karachi for building custom SaaS web apps",
-    "Tier-1 Net Metering solar installer in Multan with Longi panels"
+    'Find a plant nursery in Lahore with delivery service',
+    'Best rooftop BBQ restaurant in Islamabad',
+    'Certified software agency in Karachi for custom web apps',
+    'Solar installer in Multan with net metering support'
   ];
 
   return (
@@ -96,7 +124,7 @@ export const AiMatchmakerModal: React.FC<AiMatchmakerModalProps> = ({
                 <h2 className="text-xl font-black tracking-tight bg-gradient-to-r from-purple-300 via-cyan-300 to-emerald-400 bg-clip-text text-transparent">
                   BizNest Smart Matchmaker
                 </h2>
-                <p className="text-xs text-slate-400">AI-powered business discovery assistant across Pakistan</p>
+                <p className="text-xs text-slate-400">AI-powered business discovery across real listed businesses</p>
               </div>
             </div>
 
@@ -153,8 +181,16 @@ export const AiMatchmakerModal: React.FC<AiMatchmakerModalProps> = ({
             </div>
           </form>
 
+          {/* Error / honest empty state — never a fabricated match */}
+          {matchError && (
+            <div className="mb-4 p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-xs text-rose-300 flex items-start gap-2">
+              <Building2 className="w-4 h-4 shrink-0 mt-0.5" />
+              <p className="leading-relaxed">{matchError}</p>
+            </div>
+          )}
+
           {/* Results Display */}
-          {reasoning && (
+          {reasoning && matchedList.length > 0 && (
             <div className="space-y-4 pt-3 border-t border-slate-800 max-h-[50vh] overflow-y-auto">
               {/* AI Reasoning Banner */}
               <div className="p-3.5 rounded-2xl bg-purple-950/30 border border-purple-500/30 text-xs text-purple-200">
@@ -177,23 +213,35 @@ export const AiMatchmakerModal: React.FC<AiMatchmakerModalProps> = ({
                     }}
                     className="p-3.5 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-emerald-500/50 flex items-center justify-between cursor-pointer group transition"
                   >
-                    <div className="flex items-center gap-3">
-                      <img
-                        src={biz.logoImage}
-                        alt={biz.name}
-                        className="w-12 h-12 rounded-xl object-cover border border-slate-700"
-                      />
-                      <div>
-                        <div className="font-bold text-sm text-white group-hover:text-emerald-400 transition">
+                    <div className="flex items-center gap-3 min-w-0">
+                      {biz.logoImage ? (
+                        <img
+                          src={biz.logoImage}
+                          alt={biz.name}
+                          className="w-12 h-12 rounded-xl object-cover border border-slate-700 shrink-0"
+                        />
+                      ) : (
+                        <div className="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center shrink-0">
+                          <Building2 className="w-6 h-6 text-emerald-400" />
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <div className="font-bold text-sm text-white group-hover:text-emerald-400 transition truncate">
                           {biz.name}
                         </div>
-                        <div className="text-xs text-slate-400">
-                          {biz.category} • {biz.city} • <strong className="text-emerald-400">{biz.trustScore}% Trust</strong>
+                        <div className="text-xs text-slate-400 flex items-center gap-1 flex-wrap">
+                          <span>{biz.category} • {biz.city}</span>
+                          {biz.reviewCount > 0 && (
+                            <span className="flex items-center gap-0.5 text-yellow-400">
+                              <Star className="w-3 h-3 fill-yellow-400" />
+                              {biz.rating.toFixed(1)} ({biz.reviewCount})
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 shrink-0">
                       <span className="text-xs font-bold text-emerald-400 px-3 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/30">
                         View Match
                       </span>
