@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, User, Building2, Sparkles, ShieldCheck, Heart, ShoppingBag, ArrowRight, CheckCircle, Mail, Phone, MapPin } from 'lucide-react';
 import { User as UserType, Order, Business } from '../types';
+import { formatDbDate } from '../lib/supabaseDB';
 
 interface AccountSettingsModalProps {
   isOpen: boolean;
@@ -126,15 +127,15 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
                   </div>
                   <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
                     <Phone className="w-4 h-4 text-slate-400" />
-                    <span><strong>Phone:</strong> {user.phone || '+92 300 1234567'}</span>
+                    <span><strong>Phone:</strong> {user.phone || <span className="text-slate-400">Not provided</span>}</span>
                   </div>
                   <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
                     <MapPin className="w-4 h-4 text-slate-400" />
-                    <span><strong>City:</strong> {user.city || 'Lahore'}</span>
+                    <span><strong>City:</strong> {user.city || <span className="text-slate-400">Not provided</span>}</span>
                   </div>
                   <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
                     <User className="w-4 h-4 text-slate-400" />
-                    <span><strong>Member Since:</strong> {user.createdAt}</span>
+                    <span><strong>Member Since:</strong> {formatDbDate(user.createdAt) || '—'}</span>
                   </div>
                 </div>
               </div>
@@ -208,7 +209,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
                   >
                     <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3 mb-3">
                       <div>
-                        <span className="font-mono text-xs font-bold text-emerald-500">{order.id}</span>
+                        <span className="font-mono text-xs font-bold text-emerald-500">#{order.id.slice(0, 8).toUpperCase()}</span>
                         <div className="text-[10px] text-slate-400">{order.createdAt}</div>
                       </div>
                       <span className="px-2.5 py-1 rounded-full text-[10px] font-bold uppercase bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
@@ -256,7 +257,13 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
                     }`}
                   >
                     <div className="flex items-center gap-3">
-                      <img src={biz.logoImage} alt={biz.name} className="w-12 h-12 rounded-xl object-cover" />
+                      {biz.logoImage ? (
+                        <img src={biz.logoImage} alt={biz.name} className="w-12 h-12 rounded-xl object-cover" />
+                      ) : (
+                        <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-slate-800 via-slate-900 to-emerald-950 flex items-center justify-center">
+                          <span className="text-lg font-extrabold text-emerald-400">{biz.name.charAt(0).toUpperCase()}</span>
+                        </div>
+                      )}
                       <div>
                         <h4 className="font-bold text-xs">{biz.name}</h4>
                         <p className="text-[11px] text-slate-500 dark:text-slate-400">{biz.category} • {biz.city}</p>

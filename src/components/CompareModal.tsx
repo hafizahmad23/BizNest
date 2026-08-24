@@ -75,11 +75,17 @@ export const CompareModal: React.FC<CompareModalProps> = ({
                           <X className="w-4 h-4" />
                         </button>
                       </div>
-                      <img
-                        src={b.coverImage}
-                        alt={b.name}
-                        className="w-full h-24 object-cover rounded-xl border border-slate-800"
-                      />
+                      {b.coverImage ? (
+                        <img
+                          src={b.coverImage}
+                          alt={b.name}
+                          className="w-full h-24 object-cover rounded-xl border border-slate-800"
+                        />
+                      ) : (
+                        <div className="w-full h-24 rounded-xl border border-slate-800 bg-gradient-to-br from-slate-800 via-slate-900 to-emerald-950 flex items-center justify-center">
+                          <span className="text-3xl font-extrabold text-emerald-400">{b.name.charAt(0).toUpperCase()}</span>
+                        </div>
+                      )}
                     </th>
                   ))}
                 </tr>

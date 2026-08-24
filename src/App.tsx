@@ -51,6 +51,7 @@ import {
   removeFromCart as dbRemoveFromCart,
   clearCart as dbClearCart,
   fetchCartItems,
+  computeCartTotals,
   createOrder,
   fetchMyOrders,
   fetchNotifications,
@@ -311,6 +312,35 @@ export default function App() {
     void loadBusinesses();
     setCartItems(loadGuestCart());
   }, [loadBusinesses]);
+
+  // ==================================================
+  // DEEP LINKS (?business=, ?city=, ?category=, ?search=)
+  // ==================================================
+  useEffect(() => {
+    if (window.location.pathname !== '/') return;
+
+    const params = new URLSearchParams(window.location.search);
+    const businessId = params.get('business');
+    if (businessId) {
+      void (async () => {
+        const { data } = await fetchBusinessById(businessId);
+        if (data) setSelectedBusiness(data);
+      })();
+    }
+
+    const city = params.get('city');
+    const category = params.get('category');
+    const search = params.get('search');
+    if (city !== null || category !== null || search !== null) {
+      setFilterState((prev) => ({
+        ...prev,
+        city: city !== null ? city || 'all' : prev.city,
+        category: category !== null ? category || 'all' : prev.category,
+        searchQuery: search !== null ? search || '' : prev.searchQuery,
+      }));
+      setCurrentView('businesses');
+    }
+  }, []);
 
   // ==================================================
   // REALTIME NOTIFICATIONS
@@ -582,8 +612,7 @@ export default function App() {
     });
 
     for (const [businessId, items] of byBusiness) {
-      const subtotal = items.reduce((s, i) => s + i.price * i.quantity, 0);
-      const deliveryFee = subtotal > 10000 ? 0 : 250;
+      const { subtotal, deliveryFee, grandTotal } = computeCartTotals(items);
 
       const { error } = await createOrder({
         businessId,
@@ -595,7 +624,7 @@ export default function App() {
         })),
         subtotal,
         deliveryFee,
-        total: subtotal + deliveryFee,
+        total: grandTotal,
         paymentMethod: draft.paymentMethod,
         deliveryAddress: `${draft.address}, ${draft.city}`,
         transactionReference: draft.transactionRef,
@@ -756,8 +785,6 @@ export default function App() {
 
     if (error) return { success: false, error };
 
-    // Refresh lead counts for owner dashboards
-    setLeads((prev) => prev);
     return { success: true };
   };
 

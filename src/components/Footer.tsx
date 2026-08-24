@@ -1,6 +1,12 @@
-import React, { useState } from 'react';
-import { Building2, Send, CheckCircle2, Heart, MessageCircle, Mail, Phone, ExternalLink } from 'lucide-react';
+import React from 'react';
+import { Building2, Heart, MessageCircle } from 'lucide-react';
 import { PAKISTAN_CITIES, POPULAR_CATEGORIES } from '../data/mockData';
+
+export const BIZNEST_SUPPORT = {
+  whatsappNumber: '923231040318',
+  whatsappFormatted: '+92 323 1040318',
+  email: 'biznestpk0@gmail.com',
+};
 
 interface FooterProps {
   onNavigate: (view: any) => void;
@@ -15,23 +21,7 @@ export const Footer: React.FC<FooterProps> = ({
   onSelectCategory,
   isDarkMode
 }) => {
-  const [email, setEmail] = useState('');
-  const [subscribed, setSubscribed] = useState(false);
-
-  const whatsappNumber = '923231040318';
-  const whatsappFormatted = '+92 323 1040318';
-  const supportEmail = 'BizNest0@gmail.com';
-  const whatsappUrl = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent('Hello BizNest Support, I have a question regarding listing my business.')}`;
-
-  const handleNewsletter = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email) return;
-    setSubscribed(true);
-    setTimeout(() => {
-      setEmail('');
-      setSubscribed(false);
-    }, 3000);
-  };
+  const whatsappUrl = `https://wa.me/${BIZNEST_SUPPORT.whatsappNumber}?text=${encodeURIComponent('Hello BizNest Support, I have a question regarding listing my business.')}`;
 
   return (
     <footer className={`border-t transition-all ${
@@ -89,14 +79,14 @@ export const Footer: React.FC<FooterProps> = ({
                 <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800/80">
                   <span className="text-[10px] font-bold uppercase text-slate-400 block">WhatsApp Support</span>
                   <a href={whatsappUrl} target="_blank" rel="noopener noreferrer" className="font-mono font-bold text-emerald-400 hover:underline">
-                    {whatsappFormatted}
+                    {BIZNEST_SUPPORT.whatsappFormatted}
                   </a>
                 </div>
 
                 <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800/80">
                   <span className="text-[10px] font-bold uppercase text-slate-400 block">Email Inquiries</span>
-                  <a href={`mailto:${supportEmail}`} className="font-mono font-bold text-cyan-400 hover:underline truncate block">
-                    {supportEmail}
+                  <a href={`mailto:${BIZNEST_SUPPORT.email}`} className="font-mono font-bold text-cyan-400 hover:underline truncate block">
+                    {BIZNEST_SUPPORT.email}
                   </a>
                 </div>
               </div>
@@ -145,8 +135,8 @@ export const Footer: React.FC<FooterProps> = ({
           <div>
             <h5 className="font-bold text-white uppercase tracking-wider mb-3">Contact Details</h5>
             <div className="space-y-2 text-slate-400 text-xs">
-              <p><strong className="text-white">Email:</strong> {supportEmail}</p>
-              <p><strong className="text-white">WhatsApp:</strong> {whatsappFormatted}</p>
+              <p><strong className="text-white">Email:</strong> {BIZNEST_SUPPORT.email}</p>
+              <p><strong className="text-white">WhatsApp:</strong> {BIZNEST_SUPPORT.whatsappFormatted}</p>
               <a
                 href={whatsappUrl}
                 target="_blank"

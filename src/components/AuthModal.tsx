@@ -331,7 +331,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               : undefined,
         });
 
-      if (!result.success || !result.user) {
+      if (!result.success) {
         setError(
           result.error ||
             'Failed to create account.'
@@ -341,14 +341,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
       /*
        * Email confirmation enabled:
-       * account created but user must verify email.
+       * account created but user must verify email. This branch returns no
+       * user/session — EXPECTED, not a failure.
        */
       if (
         result.needsEmailConfirmation
       ) {
         setSuccessMessage(
           result.message ||
-            'Account created. Please check your email and verify your account before logging in.'
+            'Please verify your email address before logging in.'
         );
 
         setMode('login');
@@ -356,6 +357,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         setLoginEmail(email);
         setLoginPassword('');
 
+        return;
+      }
+
+      if (!result.user) {
+        setError(result.error || 'Please log in to continue.');
         return;
       }
 

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, ShieldCheck, CheckCircle2, Truck, Lock, AlertTriangle, Loader2 } from 'lucide-react';
 import { CartItem, PaymentMethod, User } from '../types';
+import { computeCartTotals } from '../lib/supabaseDB';
 
 interface CheckoutDraft {
   paymentMethod: PaymentMethod;
@@ -54,9 +55,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   if (!isOpen) return null;
   if (items.length === 0 && step !== 'success') return null;
 
-  const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const deliveryFee = subtotal > 10000 ? 0 : 250;
-  const grandTotal = subtotal + deliveryFee;
+  const { subtotal, deliveryFee, grandTotal } = computeCartTotals(items);
 
   const paymentOptions: { id: PaymentMethod; name: string; tag: string; icon: string; enabled: boolean }[] = [
     { id: 'cod', name: 'Cash on Delivery', tag: 'Pay at Doorstep', icon: '🚚', enabled: true },
