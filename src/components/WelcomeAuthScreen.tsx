@@ -202,16 +202,22 @@ export const WelcomeAuthScreen: React.FC<WelcomeAuthScreenProps> = ({
     });
     setSignupLoading(false);
 
-    if (!res.success || !res.user) {
+    if (!res.success) {
       setSignupError(res.error || 'Failed to create account. Please try again.');
       return;
     }
 
     if (res.needsEmailConfirmation) {
-      setSignupError(res.message || 'Please verify your email address before logging in.');
+      setSignupError('Account created successfully. Please verify your email address before logging in.');
       return;
     }
-      onLoginSuccess(res.user, rememberMe);
+
+    if (!res.user) {
+      setSignupError(res.error || 'Please log in to continue.');
+      return;
+    }
+
+    onLoginSuccess(res.user, rememberMe);
   };
 
   // Google OAuth Login Action

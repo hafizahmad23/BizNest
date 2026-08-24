@@ -7,6 +7,82 @@
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- ============================================================================
+-- 0. LEGACY CLEANUP
+-- ============================================================================
+-- Drop only incompatible legacy tables/functions so the canonical schema below
+-- can be created. Safe to re-run (idempotent).
+
+DO $$
+DECLARE
+  t text;
+  incompatible boolean;
+  legacy_tables text[] := ARRAY[
+    'profiles','provinces','districts','cities','categories','businesses',
+    'business_products','reviews','business_leads','saved_businesses',
+    'conversations','messages','carts','cart_items','orders','order_items',
+    'notifications','verification_requests'
+  ];
+BEGIN
+  FOREACH t IN ARRAY legacy_tables LOOP
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = t) THEN
+      SELECT
+        NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = t AND column_name = 'id'
+        )
+        OR EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = t
+            AND column_name = 'id' AND data_type <> 'uuid'
+        )
+        OR (
+          t = 'profiles'
+          AND NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = t AND column_name = 'role'
+          )
+        )
+        OR (
+          t = 'businesses'
+          AND NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = t AND column_name = 'owner_id'
+          )
+        )
+      INTO incompatible;
+
+      IF incompatible THEN
+        EXECUTE format('DROP TABLE IF EXISTS public.%I CASCADE', t);
+      END IF;
+    END IF;
+  END LOOP;
+END $$;
+
+DO $$
+DECLARE
+  funcs text[];
+  fn text;
+BEGIN
+  SELECT array_agg(p.oid::regprocedure::text)
+  INTO funcs
+  FROM pg_proc p
+  JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public'
+    AND p.proname IN (
+      'is_admin','is_business_owner','handle_new_user','recalc_business_rating',
+      'set_updated_at','guard_profile_privilege','guard_business_privileges',
+      'increment_business_views','recalc_business_leads','notify_owner_on_lead',
+      'notify_owner_on_order','notify_owner_on_status_change','touch_conversation'
+    );
+
+  IF funcs IS NOT NULL THEN
+    FOREACH fn IN ARRAY funcs LOOP
+      EXECUTE format('DROP FUNCTION IF EXISTS %s CASCADE', fn);
+    END LOOP;
+  END IF;
+END $$;
+
+-- ============================================================================
 -- 1. TABLES
 -- ============================================================================
 
@@ -423,7 +499,7 @@ END;
 $$;
 
 DROP TRIGGER IF EXISTS trg_guard_profile_privilege ON profiles;
-CREATE TRIGGER trg_guard_profile_privilege BEFORE UPDATE ON profiles
+CREATE TRIGGER trg_guard_profile_privilege BEFORE INSERT OR UPDATE ON profiles
   FOR EACH ROW EXECUTE FUNCTION guard_profile_privilege();
 
 -- Guard: business owners can NEVER self-approve, verify, feature, or
@@ -637,6 +713,11 @@ CREATE POLICY profiles_update_own ON profiles
   FOR UPDATE
   USING (id = auth.uid() OR is_admin())
   WITH CHECK (id = auth.uid() OR is_admin());
+
+DROP POLICY IF EXISTS profiles_insert_own ON profiles;
+CREATE POLICY profiles_insert_own ON profiles
+  FOR INSERT
+  WITH CHECK (id = auth.uid());
 
 -- ------------------------- locations / categories --------------------------
 DROP POLICY IF EXISTS provinces_read_all ON provinces;
@@ -880,6 +961,23 @@ CREATE POLICY verification_update_admin ON verification_requests
   FOR UPDATE
   USING (is_admin())
   WITH CHECK (is_admin());
+
+-- ============================================================================
+-- 4.5 API PRIVILEGES
+-- ============================================================================
+
+GRANT USAGE ON SCHEMA public TO anon, authenticated;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon, authenticated;
+GRANT INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO authenticated;
+GRANT INSERT ON business_leads TO anon;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT ALL ON TABLES TO postgres, anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT ALL ON SEQUENCES TO postgres, anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT ALL ON FUNCTIONS TO postgres, anon, authenticated, service_role;
+NOTIFY pgrst, 'reload schema';
 
 -- ============================================================================
 -- 5. SEED DATA — CATEGORIES (16)
@@ -1241,7 +1339,9 @@ END $$;
 
 -- ============================================================================
 -- DONE. Next steps (manual):
--- 1. Create your admin user (sign up in the app), then run:
+-- 1. Create your admin user (sign up in the app), then bootstrap the admin role:
+--      ALTER TABLE profiles DISABLE TRIGGER trg_guard_profile_privilege;
 --      UPDATE profiles SET role = 'admin' WHERE email = 'you@example.com';
+--      ALTER TABLE profiles ENABLE TRIGGER trg_guard_profile_privilege;
 -- 2. Set VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY in Vercel env vars.
 -- ============================================================================

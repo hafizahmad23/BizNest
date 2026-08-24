@@ -19,7 +19,7 @@ export const ContactSection: React.FC<ContactSectionProps> = ({ isDarkMode }) =>
 
   const whatsappNumber = '923231040318';
   const whatsappFormatted = '+92 323 1040318';
-  const supportEmail = 'BizNestpk0@gmail.com';
+  const supportEmail = 'biznestpk0@gmail.com';
   const whatsappUrl = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent('Hello BizNest Support, I have an inquiry regarding listing my business.')}`;
 
   const handleCopyEmail = () => {
@@ -30,6 +30,20 @@ export const ContactSection: React.FC<ContactSectionProps> = ({ isDarkMode }) =>
 
   const handleSubmitForm = (e: React.FormEvent) => {
     e.preventDefault();
+    const ticket = [
+      '*New BizNest Support Ticket*',
+      `Name: ${formName.trim()}`,
+      `Phone: ${formPhone.trim()}`,
+      `Email: ${formEmail.trim()}`,
+      `City: ${formCity}`,
+      `Subject: ${formSubject.trim()}`,
+      `Message: ${formMessage.trim()}`,
+    ].join('\n');
+    window.open(
+      `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(ticket)}`,
+      '_blank',
+      'noopener,noreferrer'
+    );
     setSubmitted(true);
     setTimeout(() => {
       setSubmitted(false);
@@ -189,19 +203,10 @@ export const ContactSection: React.FC<ContactSectionProps> = ({ isDarkMode }) =>
                 <div className="w-14 h-14 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto text-2xl border border-emerald-500/30">
                   <CheckCircle2 className="w-8 h-8" />
                 </div>
-                <h4 className="text-lg font-bold text-white">Message Delivered Successfully!</h4>
+                <h4 className="text-lg font-bold text-white">Your Ticket is Ready in WhatsApp!</h4>
                 <p className="text-xs text-emerald-300 max-w-md mx-auto leading-relaxed">
-                  Thank you for contacting BizNest Support. Our representative will review your message and reply via WhatsApp or Email shortly.
+                  just press Send in WhatsApp
                 </p>
-                <a
-                  href={whatsappUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-500 text-slate-950 font-bold text-xs shadow-md mt-2"
-                >
-                  <MessageCircle className="w-4 h-4 fill-slate-950" />
-                  <span>Follow Up on WhatsApp Now</span>
-                </a>
               </motion.div>
             ) : (
               <form onSubmit={handleSubmitForm} className="space-y-4">

@@ -1,6 +1,7 @@
 import React from 'react';
 import { X, ShoppingBag, Trash2, Plus, Minus, ArrowRight, ShieldCheck } from 'lucide-react';
 import { CartItem } from '../types';
+import { computeCartTotals } from '../lib/supabaseDB';
 
 interface CartDrawerProps {
   isOpen: boolean;
@@ -27,9 +28,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
 }) => {
   if (!isOpen) return null;
 
-  const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const deliveryFee = subtotal > 10000 || items.length === 0 ? 0 : 250;
-  const grandTotal = subtotal + deliveryFee;
+  const { subtotal, deliveryFee, grandTotal } = computeCartTotals(items);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm animate-fade-in">

@@ -277,8 +277,9 @@ export async function fetchBusinesses(filters: BusinessFilters = {}): Promise<Db
   if (filters.districtId) query = query.eq('district_id', filters.districtId);
   if (filters.featuredOnly) query = query.eq('is_featured', true);
 
-  if (filters.search && filters.search.trim()) {
-    const q = `%${filters.search.trim()}%`;
+  const safeTerm = (filters.search || '').trim().replace(/[.,()"'\\]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (safeTerm) {
+    const q = `%${safeTerm}%`;
     query = query.or(`name.ilike.${q},tagline.ilike.${q},description.ilike.${q}`);
   }
 
@@ -640,7 +641,7 @@ export async function createLead(input: CreateLeadInput): Promise<DbResult<LeadI
     data: { user },
   } = await supabase.auth.getUser();
 
-  const { data, error } = await supabase
+  const { error } = await supabase
     .from('business_leads')
     .insert({
       business_id: input.businessId,
@@ -649,12 +650,30 @@ export async function createLead(input: CreateLeadInput): Promise<DbResult<LeadI
       sender_email: sanitizeText(input.senderEmail || '', 200) || null,
       sender_phone: sanitizeText(input.senderPhone || '', 30) || null,
       message: sanitizeMultiline(input.message, 2000),
-    })
-    .select('*, businesses ( name, cities ( name ) )')
-    .single();
+    });
 
   if (error) return { data: null, error: err(error.message) };
-  return { data: mapLeadRow(data), error: null };
+
+  // The UI only needs success/failure. Build the return value from the
+  // input fields because an anon/guest sender may INSERT into business_leads
+  // but cannot SELECT it back (RLS), which would make select().single()
+  // throw a misleading 406 "Cannot coerce".
+  return {
+    data: {
+      id: '',
+      businessId: input.businessId,
+      businessName: '',
+      senderId: user?.id || undefined,
+      senderName: sanitizeText(input.senderName, 100),
+      senderPhone: sanitizeText(input.senderPhone || '', 30),
+      senderEmail: sanitizeText(input.senderEmail || '', 200),
+      message: sanitizeMultiline(input.message, 2000),
+      city: '',
+      createdAt: formatDbDate(new Date().toISOString()),
+      status: 'new',
+    },
+    error: null,
+  };
 }
 
 export async function fetchLeadsByBusiness(businessId: string): Promise<DbResult<LeadInquiry[]>> {
@@ -1086,6 +1105,36 @@ export async function clearCart(): Promise<DbResult<null>> {
 }
 
 // ============================================================================
+// CART TOTALS
+// ============================================================================
+
+/**
+ * Canonical cart totals rule: items are grouped by business; each business
+ * gets a delivery fee of 0 when its own subtotal is greater than 10000,
+ * otherwise 250. The grand total is the combined subtotal + combined fees.
+ */
+export function computeCartTotals(
+  items: CartItem[]
+): { subtotal: number; deliveryFee: number; grandTotal: number } {
+  const perBusiness = new Map<string, number>();
+  items.forEach((item) => {
+    perBusiness.set(
+      item.businessId,
+      (perBusiness.get(item.businessId) || 0) + item.price * item.quantity
+    );
+  });
+
+  let subtotal = 0;
+  let deliveryFee = 0;
+  perBusiness.forEach((businessSubtotal) => {
+    subtotal += businessSubtotal;
+    deliveryFee += businessSubtotal > 10000 ? 0 : 250;
+  });
+
+  return { subtotal, deliveryFee, grandTotal: subtotal + deliveryFee };
+}
+
+// ============================================================================
 // ORDERS
 // ============================================================================
 
@@ -1329,6 +1378,36 @@ export function subscribeToNotifications(
 // PROFILES
 // ============================================================================
 
+/**
+ * Ensure the current auth user has a minimal profiles row. Legacy users who
+ * signed up before the auth trigger (or without a profile) would otherwise
+ * hit a 406 on the next profiles update / role upgrade.
+ */
+export async function ensureProfileRow(userId: string): Promise<DbResult<null>> {
+  if (!isSupabaseConfigured) return notConfigured();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const metadata = user?.user_metadata || {};
+
+  const { error } = await supabase
+    .from('profiles')
+    .upsert(
+      {
+        id: userId,
+        email: user?.email ?? null,
+        full_name: metadata.full_name || metadata.name || null,
+        phone: metadata.phone || null,
+        city: metadata.city || null,
+      },
+      { onConflict: 'id', ignoreDuplicates: true }
+    );
+
+  if (error) return { data: null, error: err(error.message) };
+  return { data: null, error: null };
+}
+
 export async function fetchProfile(userId: string): Promise<DbResult<ProfileRow>> {
   if (!isSupabaseConfigured) return notConfigured();
 
@@ -1351,6 +1430,8 @@ export async function updateProfile(updates: {
 }): Promise<DbResult<ProfileRow>> {
   const { userId, error: authError } = await getSessionUserId();
   if (authError || !userId) return { data: null, error: authError };
+
+  await ensureProfileRow(userId);
 
   const patch: Record<string, any> = {};
   if (updates.fullName !== undefined) patch.full_name = sanitizeText(updates.fullName, 100);
@@ -1378,6 +1459,8 @@ export async function updateProfile(updates: {
 export async function upgradeToBusinessRole(): Promise<DbResult<ProfileRow>> {
   const { userId, error: authError } = await getSessionUserId();
   if (authError || !userId) return { data: null, error: authError };
+
+  await ensureProfileRow(userId);
 
   const { data, error } = await supabase
     .from('profiles')

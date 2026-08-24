@@ -31,12 +31,18 @@ export const BusinessCard: React.FC<BusinessCardProps> = ({
     >
       {/* Top Cover Image & Overlay Badges */}
       <div className="relative h-44 w-full overflow-hidden bg-slate-900 cursor-pointer" onClick={() => onViewDetail(business)}>
-        <img
-          src={business.coverImage}
-          alt={business.name}
-          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-          loading="lazy"
-        />
+        {business.coverImage ? (
+          <img
+            src={business.coverImage}
+            alt={business.name}
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+            loading="lazy"
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-slate-800 via-slate-900 to-emerald-950">
+            <span className="text-4xl font-extrabold text-emerald-400">{business.name.charAt(0).toUpperCase()}</span>
+          </div>
+        )}
         <div className="absolute inset-0 bg-gradient-to-t from-[#0d1322] via-[#0d1322]/20 to-transparent" />
 
         {/* Category Pill */}
@@ -89,11 +95,17 @@ export const BusinessCard: React.FC<BusinessCardProps> = ({
         <div>
           {/* Logo & Title */}
           <div className="flex items-start gap-3 mb-2">
-            <img
-              src={business.logoImage}
-              alt={business.name}
-              className="w-10 h-10 rounded-xl object-cover border border-slate-200 dark:border-slate-700/80 shadow-md shrink-0 bg-slate-100 dark:bg-slate-900"
-            />
+            {business.logoImage ? (
+              <img
+                src={business.logoImage}
+                alt={business.name}
+                className="w-10 h-10 rounded-xl object-cover border border-slate-200 dark:border-slate-700/80 shadow-md shrink-0 bg-slate-100 dark:bg-slate-900"
+              />
+            ) : (
+              <div className="w-10 h-10 rounded-xl border border-slate-200 dark:border-slate-700/80 shadow-md shrink-0 bg-gradient-to-br from-slate-800 via-slate-900 to-emerald-950 flex items-center justify-center">
+                <span className="text-sm font-extrabold text-emerald-400">{business.name.charAt(0).toUpperCase()}</span>
+              </div>
+            )}
             <div className="flex-1 min-w-0">
               <h3 
                 onClick={() => onViewDetail(business)}

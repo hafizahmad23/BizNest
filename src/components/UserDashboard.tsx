@@ -13,7 +13,7 @@ import {
 import {
   fetchCategories, fetchProvinces, fetchDistrictsByProvince, fetchCitiesByDistrict,
   updateLeadStatus, fetchUserConversations, fetchBusinessOrders, updateOrderStatus,
-  CreateBusinessInput
+  formatDbDate, CreateBusinessInput
 } from '../lib/supabaseDB';
 import { validateBusinessInput, FieldErrors, sanitizeText, sanitizeMultiline } from '../lib/validation';
 
@@ -883,7 +883,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   <div className={`pt-3 border-t flex items-center justify-between text-xs font-semibold ${dividerCls}`}>
                     <span className={`${subTextCls} flex items-center gap-1`}>
                       <Clock className="w-3.5 h-3.5" />
-                      <span>Listed: {biz.createdAt}</span>
+                      <span>Listed: {formatDbDate(biz.createdAt) || '—'}</span>
                     </span>
 
                     <div className="flex items-center gap-2">
