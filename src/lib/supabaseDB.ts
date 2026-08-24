@@ -1343,34 +1343,34 @@ export async function markAllNotificationsRead(): Promise<DbResult<null>> {
 
 /** Realtime subscription for new notifications of the current user. */
 export function subscribeToNotifications(
+  userId: string,
   callback: (notification: AppNotification) => void
 ): () => void {
   if (!isSupabaseConfigured) return () => {};
 
-  let channel: ReturnType<typeof supabase.channel> | null = null;
+  const topic = `notifications:${userId}`;
+  for (const ch of supabase.getChannels()) {
+    if (ch.topic === `realtime:${topic}`) void supabase.removeChannel(ch);
+  }
 
-  void supabase.auth.getUser().then(({ data }: any) => {
-    const uid = data?.user?.id;
-    if (!uid) return;
-    channel = supabase
-      .channel(`notifications:${uid}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'notifications',
-          filter: `user_id=eq.${uid}`,
-        },
-        (payload: any) => {
-          callback(mapNotificationRow(payload.new));
-        }
-      )
-      .subscribe();
-  });
+  const channel = supabase
+    .channel(topic)
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'notifications',
+        filter: `user_id=eq.${userId}`,
+      },
+      (payload: any) => {
+        callback(mapNotificationRow(payload.new));
+      }
+    )
+    .subscribe();
 
   return () => {
-    if (channel) void supabase.removeChannel(channel);
+    void supabase.removeChannel(channel);
   };
 }
 

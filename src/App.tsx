@@ -347,7 +347,7 @@ export default function App() {
   // ==================================================
   useEffect(() => {
     if (!currentUser) return;
-    const unsubscribe = subscribeToNotifications((notification) => {
+    const unsubscribe = subscribeToNotifications(currentUser.id, (notification) => {
       setNotifications((prev) => [notification, ...prev]);
     });
     return unsubscribe;
@@ -933,7 +933,7 @@ export default function App() {
 
   return (
     <div
-      className={`min-h-screen transition-colors duration-300 font-sans selection:bg-emerald-500 selection:text-white relative overflow-x-hidden ${
+      className={`min-h-screen transition-colors duration-300 font-sans selection:bg-emerald-500 selection:text-white relative overflow-x-clip ${
         isDarkMode ? 'bg-[#0f172a] text-slate-100' : 'bg-white text-slate-900'
       }`}
     >
