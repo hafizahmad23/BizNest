@@ -279,7 +279,12 @@ export default function App() {
         console.error('Failed to restore Supabase session:', error);
         if (active) setCurrentUser(null);
       } finally {
-        if (active) setAuthChecked(true);
+        if (active) {
+          // The gate flips ONLY here — after the session (and the user, if
+          // any) has been fully restored. Never from the auth listener.
+          setAuthChecked(true);
+          setLoading(false);
+        }
       }
     };
 
@@ -295,7 +300,11 @@ export default function App() {
         setCurrentUser(user);
         void loadUserScopedData(user);
       }
-      setAuthChecked(true);
+      // CRITICAL: do NOT set authChecked here. Supabase fires an
+      // INITIAL_SESSION event on every page load that can arrive BEFORE
+      // restoreSession() has set currentUser — flipping the gate that early
+      // briefly mounts the welcome screen for a logged-in user and then
+      // remounts the whole app (dead clicks, scroll snapping to top).
     });
 
     return () => {
