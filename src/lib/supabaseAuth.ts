@@ -313,25 +313,32 @@ export async function getCurrentSupabaseUser(): Promise<UserType | null> {
 /* =========================================================
    AUTH STATE LISTENER
    Emits the full profile-backed User (role from profiles table)
-   on SIGNED_IN / SIGNED_OUT / TOKEN_REFRESHED events.
+   on SIGNED_IN, and null on SIGNED_OUT.
+   HARDENING: a missing/null session on any other event
+   (INITIAL_SESSION, TOKEN_REFRESHED, mid-refresh gaps…) is NOT
+   a sign-out — emitting null for those briefly unmounted the
+   whole app mid-use (dead clicks, scroll resets). Only the
+   explicit SIGNED_OUT event does.
 ========================================================= */
 
 export function subscribeToSupabaseAuthChanges(
   onUserChange: (user: UserType | null, event: string) => void
 ): () => void {
   const { data } = supabase.auth.onAuthStateChange((event, session) => {
-    if (event === 'SIGNED_OUT' || !session?.user) {
-      onUserChange(null, event);
+    if (event === 'SIGNED_OUT') {
+      onUserChange(null, 'SIGNED_OUT');
       return;
     }
 
-    if (event === 'TOKEN_REFRESHED') {
-      // Keep current state; nothing needs to be re-fetched.
+    if (event !== 'SIGNED_IN' || !session?.user) {
+      // INITIAL_SESSION (handled by the app's own session restore),
+      // TOKEN_REFRESHED, USER_UPDATED, transient null sessions, etc.:
+      // keep current UI state as-is.
       return;
     }
 
     void mapSupabaseUser(session.user).then((user) => {
-      onUserChange(user, event);
+      onUserChange(user, 'SIGNED_IN');
     });
   });
 

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Loader } from './components/Loader';
 import { Navbar } from './components/Navbar';
@@ -140,6 +140,20 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
 
+  // ==================================================
+  // AUTH GATE ONE-WAY LATCH
+  // Once the main app has rendered for a signed-in user it must NEVER be
+  // unmounted again for the lifetime of the page — no transient auth event
+  // (TOKEN_REFRESHED, INITIAL_SESSION, a momentary getSession/getUser
+  // failure or null session mid-refresh) may kick the user back to the
+  // loader/welcome screen. Only an explicit SIGNED_OUT resets the latch.
+  // ==================================================
+  const mainAppShownRef = useRef(false);
+
+  // Guards against duplicate full user-data loads for the same user within
+  // one page lifetime (login handler + SIGNED_IN listener both fire).
+  const scopedDataLoadedForRef = useRef<string | null>(null);
+
   // --------------------------------------------------
   // MODALS & SELECTION
   // --------------------------------------------------
@@ -202,6 +216,10 @@ export default function App() {
 
   const loadUserScopedData = useCallback(
     async (user: User) => {
+      // Skip duplicate full loads for the same user in one page lifetime.
+      if (scopedDataLoadedForRef.current === user.id) return;
+      scopedDataLoadedForRef.current = user.id;
+
       // Owned businesses + their leads (business-role users)
       const ownedRes = await fetchBusinessesByOwner(user.id);
       const owned = ownedRes.data || [];
@@ -220,11 +238,17 @@ export default function App() {
       const savedRes = await fetchSavedBusinesses(user.id);
       const saved = savedRes.data || [];
       setSavedBusinessesList(saved);
-      setCurrentUser((prev) =>
-        prev && prev.id === user.id
-          ? { ...prev, savedBusinessIds: saved.map((b) => b.id) }
-          : prev
-      );
+      // Merge saved ids WITHOUT changing the user object's identity when
+      // nothing actually changed — a new identity here re-runs the realtime
+      // notification subscription effect (and every [currentUser] consumer)
+      // on each load.
+      setCurrentUser((prev) => {
+        if (!prev || prev.id !== user.id) return prev;
+        const nextIds = saved.map((b) => b.id).sort().join('|');
+        const prevIds = [...prev.savedBusinessIds].sort().join('|');
+        if (prevIds === nextIds) return prev; // identity-stable no-op
+        return { ...prev, savedBusinessIds: saved.map((b) => b.id) };
+      });
 
       // Merge any guest cart into the persistent DB cart
       const guest = loadGuestCart();
@@ -259,6 +283,7 @@ export default function App() {
     setPendingBusinesses([]);
     setAdminStats(null);
     setCartItems(loadGuestCart());
+    scopedDataLoadedForRef.current = null;
   }, []);
 
   // ==================================================
@@ -292,19 +317,28 @@ export default function App() {
 
     const unsubscribe = subscribeToSupabaseAuthChanges((user, event) => {
       if (!active) return;
-      if (event === 'SIGNED_OUT' || !user) {
+
+      // The ONLY path back to the loader/welcome screen is an explicit
+      // SIGNED_OUT. Every other event keeps the mounted app mounted (the
+      // mainAppShownRef latch) — transient session gaps, token refreshes and
+      // INITIAL_SESSION repeats must never unmount the app mid-use.
+      if (event === 'SIGNED_OUT') {
+        mainAppShownRef.current = false;
         setCurrentUser(null);
         clearUserScopedData();
         setCurrentView('home');
-      } else if (event === 'SIGNED_IN') {
-        setCurrentUser(user);
+        return;
+      }
+
+      if (event === 'SIGNED_IN' && user) {
+        // Identity-stable: setting a new object for the same user id would
+        // re-run every [currentUser] effect for no reason.
+        setCurrentUser((prev) => (prev && prev.id === user.id ? prev : user));
         void loadUserScopedData(user);
       }
-      // CRITICAL: do NOT set authChecked here. Supabase fires an
-      // INITIAL_SESSION event on every page load that can arrive BEFORE
-      // restoreSession() has set currentUser — flipping the gate that early
-      // briefly mounts the welcome screen for a logged-in user and then
-      // remounts the whole app (dead clicks, scroll snapping to top).
+      // INITIAL_SESSION / TOKEN_REFRESHED / USER_UPDATED / transient null
+      // sessions: intentionally ignored — session restore owns first load,
+      // and the gate is a one-way latch afterwards.
     });
 
     return () => {
@@ -360,14 +394,17 @@ export default function App() {
 
   // ==================================================
   // REALTIME NOTIFICATIONS
+  // Keyed by the user ID (not the whole user object) so the subscription is
+  // not torn down and recreated whenever currentUser's identity changes.
   // ==================================================
+  const currentUserId = currentUser?.id;
   useEffect(() => {
-    if (!currentUser) return;
-    const unsubscribe = subscribeToNotifications(currentUser.id, (notification) => {
+    if (!currentUserId) return;
+    const unsubscribe = subscribeToNotifications(currentUserId, (notification) => {
       setNotifications((prev) => [notification, ...prev]);
     });
     return unsubscribe;
-  }, [currentUser]);
+  }, [currentUserId]);
 
   // ==================================================
   // NAVIGATION / THEME
@@ -431,6 +468,8 @@ export default function App() {
 
   const handleLogout = async () => {
     await logoutFromSupabase();
+    // Explicit sign-out is the one allowed way back to the welcome screen.
+    mainAppShownRef.current = false;
     setCurrentUser(null);
     clearUserScopedData();
     setCurrentView('home');
@@ -928,18 +967,24 @@ export default function App() {
   const comparedBusinesses = businesses.filter((b) => comparedIds.includes(b.id));
 
   // ==================================================
-  // AUTH GATE
+  // AUTH GATE (one-way latch)
+  //  - Before the session is restored: show the loader.
+  //  - After restore with no user: show the welcome screen.
+  //  - ONCE the main app has rendered, the latch makes this gate inert for
+  //    the rest of the page's lifetime — no later auth event can ever
+  //    unmount the app (or flash the loader over it) again. Only SIGNED_OUT
+  //    resets the latch.
   // ==================================================
 
   if (window.location.pathname === '/reset-password') {
     return <ResetPassword onBack={() => window.location.assign('/')} />;
   }
 
-  if (!authChecked) {
+  if (!authChecked && !mainAppShownRef.current) {
     return <Loader onFinish={handleFinishLoader} />;
   }
 
-  if (authChecked && !currentUser) {
+  if (!currentUser && !mainAppShownRef.current) {
     return (
       <WelcomeAuthScreen
         onLoginSuccess={(user) => handleLoginSuccess(user)}
@@ -947,6 +992,9 @@ export default function App() {
       />
     );
   }
+
+  // Latch ON — from this render onward the main app stays mounted.
+  mainAppShownRef.current = true;
 
   // ==================================================
   // MAIN APP
@@ -979,7 +1027,8 @@ export default function App() {
         />
       </div>
 
-      {loading && <Loader onFinish={handleFinishLoader} />}
+      {/* Intro loader — never shown again once the main app is latched on. */}
+      {loading && !mainAppShownRef.current && <Loader onFinish={handleFinishLoader} />}
 
       <Navbar
         isDarkMode={isDarkMode}

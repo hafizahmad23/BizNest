@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import { MapPin, Building2, Compass, ArrowUpRight, Globe, Layers } from 'lucide-react';
 import { PAKISTAN_CITIES } from '../data/mockData';
@@ -54,19 +54,25 @@ export const PakistanMap: React.FC<PakistanMapProps> = ({
     };
   }, []);
 
-  const handleCascadingChange = (loc: LocationSelectionValue) => {
-    // Determine the most specific selected area
-    const target =
-      loc.cityOrVillageName !== 'All Areas'
-        ? loc.cityOrVillageName
-        : loc.districtName !== 'All Districts'
-        ? loc.districtName
-        : loc.provinceName !== 'All Pakistan'
-        ? loc.provinceName
-        : 'all';
+  // Stable identity: the selector keeps callbacks in effects, so an inline
+  // arrow here would churn subscriptions/derivatives in children on every
+  // render of this component.
+  const handleCascadingChange = useCallback(
+    (loc: LocationSelectionValue) => {
+      // Determine the most specific selected area
+      const target =
+        loc.cityOrVillageName !== 'All Areas'
+          ? loc.cityOrVillageName
+          : loc.districtName !== 'All Districts'
+          ? loc.districtName
+          : loc.provinceName !== 'All Pakistan'
+          ? loc.provinceName
+          : 'all';
 
-    onSelectCity(target === 'All Pakistan' ? 'all' : target);
-  };
+      onSelectCity(target === 'All Pakistan' ? 'all' : target);
+    },
+    [onSelectCity]
+  );
 
   return (
     <section className="py-12 px-4 sm:px-8 max-w-7xl mx-auto">

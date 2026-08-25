@@ -1,11 +1,11 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Search, MapPin, Sparkles, ShieldCheck, ArrowRight, X, Clock, Trash2, 
   History, Tag, Globe, ChevronDown 
 } from 'lucide-react';
 import { PAKISTAN_CITIES, POPULAR_CATEGORIES } from '../data/mockData';
-import { CascadingLocationSelector } from './CascadingLocationSelector';
+import { CascadingLocationSelector, LocationSelectionValue } from './CascadingLocationSelector';
 
 export interface RecentSearchItem {
   id: string;
@@ -48,6 +48,24 @@ export const Hero: React.FC<HeroProps> = ({
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [showCascadingSelector, setShowCascadingSelector] = useState(false);
   const [recentSearches, setRecentSearches] = useState<RecentSearchItem[]>([]);
+
+  // Stable-identity location handler for the cascading selector (an inline
+  // arrow here would give the selector's memoized callbacks a new identity on
+  // every render).
+  const handleCascadingLocationChange = useCallback(
+    (loc: LocationSelectionValue) => {
+      const targetName = loc.cityOrVillageName !== 'All Areas'
+          ? loc.cityOrVillageName
+          : (loc.tehsilName !== 'All Tehsils'
+            ? loc.tehsilName
+            : (loc.districtName !== 'All Districts'
+              ? loc.districtName
+              : (loc.provinceName !== 'All Pakistan' ? loc.provinceName : 'all')));
+      setCity(targetName);
+      if (onSearch) onSearch(query, category, targetName, verifiedOnly);
+    },
+    [onSearch, query, category, verifiedOnly]
+  );
 
   const searchContainerRef = useRef<HTMLDivElement>(null);
 
@@ -468,17 +486,7 @@ export const Hero: React.FC<HeroProps> = ({
                 <CascadingLocationSelector
                   isDarkMode={isDarkMode}
                   showMapVerification={true}
-                  onLocationChange={(loc) => {
-                    const targetName = loc.cityOrVillageName !== 'All Areas' 
-                      ? loc.cityOrVillageName 
-                      : (loc.tehsilName !== 'All Tehsils' 
-                        ? loc.tehsilName 
-                        : (loc.districtName !== 'All Districts' 
-                          ? loc.districtName 
-                          : (loc.provinceName !== 'All Pakistan' ? loc.provinceName : 'all')));
-                    setCity(targetName);
-                    triggerSearch(query, category, targetName, verifiedOnly);
-                  }}
+                  onLocationChange={handleCascadingLocationChange}
                 />
               </motion.div>
             )}
