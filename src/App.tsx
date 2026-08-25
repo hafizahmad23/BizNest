@@ -305,6 +305,13 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // The intro loader must never finish before the Supabase session restore
+  // completes — otherwise the Welcome screen flashes for a logged-in user
+  // (whose restore is slower than the loader timer) and the app remounts.
+  useEffect(() => {
+    if (authChecked) setLoading(false);
+  }, [authChecked]);
+
   // ==================================================
   // INITIAL PUBLIC DATA (businesses — real DB only)
   // ==================================================
@@ -410,11 +417,7 @@ export default function App() {
   const handleLoginSuccess = (user: User) => {
     setCurrentUser(user);
     void loadUserScopedData(user);
-    if (user.role === 'business' || user.role === 'admin') {
-      setCurrentView('dashboard');
-    } else {
-      setCurrentView('home');
-    }
+    setCurrentView('home');
   };
 
   const handleLogout = async () => {
@@ -430,6 +433,15 @@ export default function App() {
    */
   const handleUpgradeToBusiness = async () => {
     if (!currentUser) return;
+
+    // Admins never "upgrade" — skip before the profiles write so an admin
+    // can never be demoted to 'business' by the upgrade flow.
+    if (currentUser.role === 'admin') {
+      setCurrentView('dashboard');
+      setIsSettingsOpen(false);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
 
     const { data, error } = await upgradeToBusinessRole();
 
@@ -918,7 +930,7 @@ export default function App() {
     return <Loader onFinish={handleFinishLoader} />;
   }
 
-  if (!loading && !currentUser) {
+  if (authChecked && !currentUser) {
     return (
       <WelcomeAuthScreen
         onLoginSuccess={(user) => handleLoginSuccess(user)}

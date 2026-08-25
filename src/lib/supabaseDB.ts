@@ -1462,14 +1462,25 @@ export async function upgradeToBusinessRole(): Promise<DbResult<ProfileRow>> {
 
   await ensureProfileRow(userId);
 
+  // Only rewrite the role for plain 'user' rows — an admin or existing
+  // business account matches no row, so their role can never be clobbered.
   const { data, error } = await supabase
     .from('profiles')
     .update({ role: 'business' })
     .eq('id', userId)
+    .eq('role', 'user')
     .select('*')
-    .single();
+    .maybeSingle();
 
   if (error) return { data: null, error: err(error.message) };
+
+  // No row updated: the caller was already 'business' or 'admin'.
+  // Return their current row unchanged.
+  if (!data) {
+    const current = await fetchProfile(userId);
+    return { data: current.data ?? null, error: current.error || 'Profile not found.' };
+  }
+
   return { data: data as ProfileRow, error: null };
 }
 

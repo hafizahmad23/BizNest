@@ -71,12 +71,12 @@ export const Navbar: React.FC<NavbarProps> = ({
   }, []);
 
   return (
-    <header className="sticky top-0 z-40 w-full px-4 sm:px-8 py-3 transition-all duration-300">
+    <header className="sticky top-0 z-40 w-full px-2 sm:px-4 py-3 transition-all duration-300">
       <div className={`max-w-7xl mx-auto rounded-2xl transition-all duration-300 ${
         isDarkMode 
           ? 'bg-[#020617]/85 border border-slate-800/80 shadow-2xl shadow-emerald-950/20 backdrop-blur-xl text-white' 
           : 'bg-white/90 border border-slate-200/90 shadow-lg shadow-slate-200/50 backdrop-blur-xl text-slate-900'
-      } px-4 sm:px-6 py-3 flex items-center justify-between relative z-10`}>
+      } px-3 sm:px-4 py-3 flex items-center justify-between relative z-10`}>
         
         {/* Brand Logo */}
         <div 
@@ -106,7 +106,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
 
         {/* Desktop Nav Links */}
-        <nav className="hidden lg:flex items-center gap-1 font-medium text-sm">
+        <nav className="hidden xl:flex items-center gap-1 font-medium text-sm">
           <button
             onClick={() => onNavigate('home')}
             className={`px-3 py-1.5 rounded-xl transition-all duration-200 text-xs font-semibold ${
@@ -210,9 +210,9 @@ export const Navbar: React.FC<NavbarProps> = ({
         </nav>
 
         {/* Right Action Controls */}
-        <div className="hidden md:flex items-center gap-2.5">
+        <div className="hidden md:flex items-center gap-2 min-w-0">
           {/* City Quick Selector */}
-          <div className="relative flex items-center">
+          <div className="relative hidden xl:flex items-center shrink-0">
             <MapPin className="w-3.5 h-3.5 text-emerald-400 absolute left-3 pointer-events-none" />
             <select
               value={effectiveCity}
@@ -494,7 +494,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 onOpenSettings();
               }
             }}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-slate-950 font-extrabold text-xs shadow-md transition transform hover:-translate-y-0.5 cursor-pointer"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-slate-950 font-extrabold text-xs shadow-md transition transform hover:-translate-y-0.5 cursor-pointer shrink-0 whitespace-nowrap"
           >
             <PlusCircle className="w-4 h-4" />
             <span>Add Business</span>
