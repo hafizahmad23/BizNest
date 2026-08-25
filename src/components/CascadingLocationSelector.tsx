@@ -214,12 +214,47 @@ export const CascadingLocationSelector: React.FC<CascadingLocationSelectorProps>
     [onLocationChange, provinces, districts, cities]
   );
 
+  // Keep the latest emit function in a ref so the selection effect below can
+  // call it WITHOUT depending on its identity. `onLocationChange` is an
+  // inline arrow in some parents (PakistanMap/Hero), so `emitChange` gets a
+  // new identity on every parent re-render — depending on it re-triggered
+  // this effect on every render and caused an infinite
+  // emit → setState → re-render → emit loop on the home page (each iteration
+  // programmatically scrolling the page and swallowing user clicks).
+  const emitChangeRef = useRef(emitChange);
   useEffect(() => {
-    emitChange(selectedProvinceId, selectedDistrictId, selectedCityId);
-  }, [selectedProvinceId, selectedDistrictId, selectedCityId, emitChange]);
+    emitChangeRef.current = emitChange;
+  }, [emitChange]);
+
+  // Emit ONLY in response to an explicit user selection change — never on
+  // mount and never because a callback identity changed. Filtering (and any
+  // scrolling it triggers in the app shell) must be strictly user-initiated.
+  const userSelectedRef = useRef(false);
+  useEffect(() => {
+    if (!userSelectedRef.current) return;
+    emitChangeRef.current(selectedProvinceId, selectedDistrictId, selectedCityId);
+  }, [selectedProvinceId, selectedDistrictId, selectedCityId]);
+
+  // User-driven pick handlers (mark the interaction so the effect above may
+  // emit).
+  const pickProvince = useCallback((id: string) => {
+    userSelectedRef.current = true;
+    setSelectedProvinceId(id);
+  }, []);
+
+  const pickDistrict = useCallback((id: string) => {
+    userSelectedRef.current = true;
+    setSelectedDistrictId(id);
+  }, []);
+
+  const pickCity = useCallback((id: string) => {
+    userSelectedRef.current = true;
+    setSelectedCityId(id);
+  }, []);
 
   const handlePickGlobalResult = (city: CityRow & { districtName?: string; provinceName?: string }) => {
-    // Sync the cascade to the picked city
+    // Sync the cascade to the picked city (explicit user action)
+    userSelectedRef.current = true;
     setSelectedProvinceId(city.province_id);
     void loadDistricts(city.province_id).then(() => {
       setSelectedDistrictId(city.district_id);
@@ -233,11 +268,17 @@ export const CascadingLocationSelector: React.FC<CascadingLocationSelectorProps>
   };
 
   const handleReset = () => {
+    userSelectedRef.current = true;
+    const alreadyAll =
+      selectedProvinceId === 'all' && selectedDistrictId === 'all' && selectedCityId === 'all';
     setSelectedProvinceId('all');
     setSelectedDistrictId('all');
     setSelectedCityId('all');
     setGlobalQuery('');
     setIsMapVisible(false);
+    // When the values were already "all" the selection effect won't re-run,
+    // so emit the reset explicitly (still a direct user action).
+    if (alreadyAll) emitChangeRef.current('all', 'all', 'all');
   };
 
   // -------------------------- RENDER HELPERS --------------------------------
@@ -456,7 +497,7 @@ export const CascadingLocationSelector: React.FC<CascadingLocationSelectorProps>
           selectedProvince?.name || 'All Pakistan',
           provinces.map((p) => ({ id: p.id, name: p.name })),
           selectedProvinceId,
-          setSelectedProvinceId,
+          pickProvince,
           false,
           'All Pakistan'
         )}
@@ -467,7 +508,7 @@ export const CascadingLocationSelector: React.FC<CascadingLocationSelectorProps>
           selectedDistrict?.name || 'All Districts',
           districts.map((d) => ({ id: d.id, name: d.name })),
           selectedDistrictId,
-          setSelectedDistrictId,
+          pickDistrict,
           selectedProvinceId === 'all',
           'All Districts'
         )}
@@ -478,7 +519,7 @@ export const CascadingLocationSelector: React.FC<CascadingLocationSelectorProps>
           selectedCity?.name || 'All Areas',
           cities.map((c) => ({ id: c.id, name: c.name })),
           selectedCityId,
-          setSelectedCityId,
+          pickCity,
           selectedDistrictId === 'all',
           'All Areas'
         )}
