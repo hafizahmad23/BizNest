@@ -36,6 +36,27 @@ export function isValidPakistanPhone(phone: string): boolean {
   return /^(\+92|92|0)3\d{9}$/.test(clean);
 }
 
+/** Full name used at signup and in Account Settings. */
+export function validateFullName(name: string): string | null {
+  const trimmed = (name || '').trim();
+  if (!trimmed) return 'Full name is required.';
+  if (trimmed.length < 3) return 'Full name must be at least 3 characters.';
+  if (trimmed.length > 60) return 'Full name must be 60 characters or fewer.';
+  return null;
+}
+
+/**
+ * WhatsApp / customer-contact number: optional.
+ * Digits only (spaces/dashes allowed), optional +92 / 92 / 0 prefix.
+ */
+export function isValidWhatsAppNumber(value: string): boolean {
+  if (!value || !value.trim()) return true;
+  const clean = value.replace(/[\s\-()]/g, '');
+  if (!/^(\+92|92|0)?\d{10,12}$/.test(clean)) return false;
+  const digits = clean.replace(/\D/g, '');
+  return digits.length >= 10 && digits.length <= 13;
+}
+
 export function isValidUrl(url: string): boolean {
   if (!url) return true; // optional fields
   try {

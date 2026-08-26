@@ -111,6 +111,7 @@ export interface User {
   email: string;
   role: UserRole; // AUTHORITATIVE source = profiles.role in Supabase
   phone?: string;
+  whatsapp?: string; // profiles.whatsapp — customer-facing contact number
   city?: string;
   businessName?: string;
   businessId?: string;
@@ -265,6 +266,7 @@ export interface ProfileRow {
   email: string | null;
   full_name: string | null;
   phone: string | null;
+  whatsapp?: string | null; // added by supabase/feature_profile_contact.sql
   avatar_url: string | null;
   role: UserRole;
   city: string | null;

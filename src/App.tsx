@@ -18,6 +18,7 @@ import { Testimonials } from './components/Testimonials';
 import { Footer } from './components/Footer';
 import { AuthModal } from './components/AuthModal';
 import { AccountSettingsModal } from './components/AccountSettingsModal';
+import type { ProfileDetailsPatch } from './components/AccountSettingsModal';
 import { CartDrawer } from './components/CartDrawer';
 import { CheckoutModal } from './components/CheckoutModal';
 import { ChatModal } from './components/ChatModal';
@@ -555,6 +556,25 @@ export default function App() {
     setCurrentView('dashboard');
     setIsSettingsOpen(false);
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  /**
+   * Instant profile-details refresh after Account Settings save.
+   * One-way: child calls this only from the Save click, never from an effect.
+   * Merges name/phone/whatsapp onto the existing user so Navbar, dashboard,
+   * and chat display names update without a reload or identity churn.
+   */
+  const handleProfileUpdated = (patch: ProfileDetailsPatch) => {
+    setCurrentUser((prev) => {
+      if (!prev) return prev;
+      const name = (patch.name && patch.name.trim()) || prev.email.split('@')[0] || 'User';
+      const phone = patch.phone?.trim() || undefined;
+      const whatsapp = patch.whatsapp?.trim() || undefined;
+      if (name === prev.name && phone === prev.phone && whatsapp === prev.whatsapp) {
+        return prev;
+      }
+      return { ...prev, name, phone, whatsapp };
+    });
   };
 
   // ==================================================
@@ -1379,6 +1399,7 @@ export default function App() {
         onClose={() => setIsSettingsOpen(false)}
         user={currentUser}
         onUpgradeToBusiness={handleUpgradeToBusiness}
+        onProfileUpdated={handleProfileUpdated}
         orders={orders}
         savedBusinesses={savedBusinessesList}
         onSelectBusiness={(business) => {

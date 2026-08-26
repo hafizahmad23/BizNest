@@ -278,6 +278,7 @@ export function mapProfileToUser(profile: ProfileRow, savedBusinessIds: string[]
     email: profile.email || '',
     role: profile.role,
     phone: profile.phone || undefined,
+    whatsapp: profile.whatsapp || undefined,
     city: profile.city || undefined,
     avatarUrl: profile.avatar_url || undefined,
     savedBusinessIds,
@@ -1650,6 +1651,7 @@ export async function fetchProfile(userId: string): Promise<DbResult<ProfileRow>
 export async function updateProfile(updates: {
   fullName?: string;
   phone?: string;
+  whatsapp?: string;
   city?: string;
   avatarUrl?: string;
 }): Promise<DbResult<ProfileRow>> {
@@ -1659,18 +1661,38 @@ export async function updateProfile(updates: {
   await ensureProfileRow(userId);
 
   const patch: Record<string, any> = {};
-  if (updates.fullName !== undefined) patch.full_name = sanitizeText(updates.fullName, 100);
-  if (updates.phone !== undefined) patch.phone = sanitizeText(updates.phone, 30);
+  if (updates.fullName !== undefined) patch.full_name = sanitizeText(updates.fullName, 60);
+  if (updates.phone !== undefined) patch.phone = sanitizeText(updates.phone, 30) || null;
+  if (updates.whatsapp !== undefined) patch.whatsapp = sanitizeText(updates.whatsapp, 30) || null;
   if (updates.city !== undefined) patch.city = sanitizeText(updates.city, 100);
   if (updates.avatarUrl !== undefined) patch.avatar_url = sanitizeText(updates.avatarUrl, 500) || null;
-  // role is NEVER patched here — role changes go through dedicated functions
+  // role / id / email are NEVER patched here — role changes go through
+  // dedicated functions; email is owned by auth + the self-heal sync.
 
-  const { data, error } = await supabase
-    .from('profiles')
-    .update(patch)
-    .eq('id', userId)
-    .select('*')
-    .single();
+  if (Object.keys(patch).length === 0) {
+    return fetchProfile(userId);
+  }
+
+  const apply = (body: Record<string, any>) =>
+    supabase.from('profiles').update(body).eq('id', userId).select('*').single();
+
+  let { data, error } = await apply(patch);
+
+  // Production-safe: if the owner has not yet run feature_profile_contact.sql,
+  // still save name/phone so the rest of the profile form is not blocked.
+  if (
+    error &&
+    updates.whatsapp !== undefined &&
+    /whatsapp|schema cache|column/i.test(error.message || '')
+  ) {
+    const { whatsapp: _omit, ...withoutWhatsapp } = patch;
+    if (Object.keys(withoutWhatsapp).length === 0) {
+      return { data: null, error: err(error.message) };
+    }
+    const retry = await apply(withoutWhatsapp);
+    data = retry.data;
+    error = retry.error;
+  }
 
   if (error) return { data: null, error: err(error.message) };
   return { data: data as ProfileRow, error: null };

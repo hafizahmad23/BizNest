@@ -1,6 +1,41 @@
 import { supabase, isSupabaseConfigured, DATABASE_NOT_CONFIGURED_ERROR } from './supabase';
 import { fetchProfile, upgradeToBusinessRole, fetchSavedBusinesses, mapProfileToUser } from './supabaseDB';
+import { isValidEmail, validateFullName } from './validation';
 import type { User as UserType, ProfileRow } from '../types';
+
+/** One silent profiles.email sync attempt per auth user, per page lifetime. */
+const emailSyncAttempted = new Set<string>();
+
+/**
+ * If the auth user's confirmed email differs from profiles.email (e.g. after
+ * they clicked the change-email confirmation link), write ONLY the email
+ * column once per session. Never touches role, id, or any other field.
+ */
+async function syncProfileEmailIfStale(authUser: any, profile: ProfileRow): Promise<ProfileRow> {
+  const authEmail = typeof authUser?.email === 'string' ? authUser.email.trim() : '';
+  if (!authEmail) return profile;
+
+  const profileEmail = (profile.email || '').trim();
+  if (authEmail.toLowerCase() === profileEmail.toLowerCase()) return profile;
+
+  const withAuthEmail: ProfileRow = { ...profile, email: authEmail };
+
+  if (!authUser.id || emailSyncAttempted.has(authUser.id)) return withAuthEmail;
+  emailSyncAttempted.add(authUser.id);
+
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .update({ email: authEmail })
+      .eq('id', authUser.id)
+      .select('*')
+      .maybeSingle();
+    if (error || !data) return withAuthEmail;
+    return data as ProfileRow;
+  } catch {
+    return withAuthEmail;
+  }
+}
 
 export type AuthResult = {
   success: boolean;
@@ -25,9 +60,10 @@ export async function mapSupabaseUser(authUser: any): Promise<UserType | null> {
   const { data: profile } = await fetchProfile(authUser.id);
 
   if (profile) {
-    const { data: saved } = await fetchSavedBusinesses(profile.id);
+    const synced = await syncProfileEmailIfStale(authUser, profile);
+    const { data: saved } = await fetchSavedBusinesses(synced.id);
     return mapProfileToUser(
-      profile,
+      synced,
       (saved || []).map((b) => b.id)
     );
   }
@@ -94,7 +130,11 @@ export async function registerWithSupabase(data: {
 }): Promise<AuthResult> {
   if (!isSupabaseConfigured) return notConfigured();
 
+  const nameError = validateFullName(data.name);
+  if (nameError) return { success: false, error: nameError };
+
   const email = data.email.trim().toLowerCase();
+  const fullName = data.name.trim();
 
   const { data: authData, error } = await supabase.auth.signUp({
     email,
@@ -102,8 +142,8 @@ export async function registerWithSupabase(data: {
     options: {
       emailRedirectTo: window.location.origin,
       data: {
-        name: data.name.trim(),
-        full_name: data.name.trim(),
+        name: fullName,
+        full_name: fullName,
         phone: data.phone.trim(),
         city: data.city,
       },
@@ -281,6 +321,62 @@ export async function updateSupabasePassword(newPassword: string): Promise<AuthR
 
 export async function sendPasswordResetEmail(email: string): Promise<AuthResult> {
   return sendPasswordResetCode(email);
+}
+
+/* =========================================================
+   CHANGE EMAIL
+   Relies on the authenticated session. Supabase emails a
+   confirmation link to the NEW address; the session and
+   login email stay on the old address until that link is
+   clicked. We never write profiles.email here — the
+   self-heal in mapSupabaseUser syncs it after confirmation.
+========================================================= */
+
+function readableEmailChangeError(message: string): string {
+  const m = message.toLowerCase();
+  if (m.includes('already') || m.includes('exists') || m.includes('registered')) {
+    return 'This email is already in use. Please choose a different address.';
+  }
+  if (m.includes('invalid') || m.includes('valid email')) {
+    return 'Please enter a valid email address.';
+  }
+  if (m.includes('rate limit')) {
+    return 'Too many attempts. Please wait a little and try again.';
+  }
+  if (m.includes('same') && m.includes('email')) {
+    return 'Please enter a different email from your current one.';
+  }
+  return message;
+}
+
+export async function requestEmailChange(newEmail: string): Promise<AuthResult> {
+  if (!isSupabaseConfigured) return notConfigured();
+
+  const email = newEmail.trim().toLowerCase();
+  if (!email || !isValidEmail(email)) {
+    return { success: false, error: 'Please enter a valid email address.' };
+  }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const current = (user?.email || '').trim().toLowerCase();
+  if (current && current === email) {
+    return { success: false, error: 'Please enter a different email from your current one.' };
+  }
+
+  const { error } = await supabase.auth.updateUser(
+    { email },
+    { emailRedirectTo: window.location.origin }
+  );
+
+  if (error) return { success: false, error: readableEmailChangeError(error.message) };
+
+  return {
+    success: true,
+    message:
+      'Confirmation link bhej diya gaya hai — apne NAYE email ka inbox khol kar link click karein. Tab tak purana email hi login ke liye kaam karega.',
+  };
 }
 
 /* =========================================================
