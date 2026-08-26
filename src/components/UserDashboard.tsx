@@ -8,14 +8,17 @@ import {
 } from 'lucide-react';
 import {
   Business, LeadInquiry, User, CategoryItem, ProvinceRow, DistrictRow,
-  CityRow, ChatConversation, Order, LeadStatus, OrderStatus
+  CityRow, ChatConversation, Order, LeadStatus, OrderStatus, ProductOrService
 } from '../types';
 import {
   fetchCategories, fetchProvinces, fetchDistrictsByProvince, fetchCitiesByDistrict,
   updateLeadStatus, fetchUserConversations, fetchBusinessOrders, updateOrderStatus,
+  createProduct, updateProduct, deleteProduct,
   formatDbDate, CreateBusinessInput
 } from '../lib/supabaseDB';
 import { validateBusinessInput, FieldErrors, sanitizeText, sanitizeMultiline } from '../lib/validation';
+import { ImageUploadField } from './ImageUploadField';
+import { ProductFormPage, ProductFormPayload } from './ProductFormPage';
 
 interface UserDashboardProps {
   user: User | null;
@@ -26,6 +29,8 @@ interface UserDashboardProps {
   onDeleteBusiness: (bizId: string) => Promise<void>;
   onUpgradeToBusiness: () => void;
   onOpenConversation: (conversation: ChatConversation) => void;
+  /** Re-fetch owned businesses (incl. product lists) after product saves. */
+  onRefreshBusinesses?: () => Promise<void>;
   isDarkMode: boolean;
 }
 
@@ -255,9 +260,14 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   onDeleteBusiness,
   onUpgradeToBusiness,
   onOpenConversation,
+  onRefreshBusinesses,
   isDarkMode
 }) => {
   const [activeTab, setActiveTab] = useState<DashboardTab>('my-businesses');
+
+  // ONE BUSINESS PER ACCOUNT: once the user owns a listing, every "add
+  // business" entry point is hidden and replaced with a friendly notice.
+  const oneBusinessLimitReached = userBusinesses.length >= 1;
 
   // ---------- Shared reference data (Supabase) ----------
   const [categories, setCategories] = useState<CategoryItem[]>([]);
@@ -297,6 +307,8 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const [formWebsite, setFormWebsite] = useState('');
   const [formHours, setFormHours] = useState('');
   const [formProducts, setFormProducts] = useState<ProductDraft[]>([]);
+  const [formLogoUrl, setFormLogoUrl] = useState('');
+  const [formCoverUrl, setFormCoverUrl] = useState('');
   const [formErrors, setFormErrors] = useState<FieldErrors>({});
   const [formServerError, setFormServerError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -337,6 +349,8 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const [editOperatingHours, setEditOperatingHours] = useState('');
   const [editPriceRange, setEditPriceRange] = useState('');
   const [editProducts, setEditProducts] = useState<ProductDraft[]>([]);
+  const [editLogoUrl, setEditLogoUrl] = useState('');
+  const [editCoverUrl, setEditCoverUrl] = useState('');
   const [editErrors, setEditErrors] = useState<FieldErrors>({});
   const [editServerError, setEditServerError] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
@@ -347,6 +361,15 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  // ---------- Dedicated product management flow (full-screen page) ----------
+  // productFormBiz: the business whose products are being managed;
+  // productFormDraft: null = create, otherwise the product being edited.
+  const [productFormBiz, setProductFormBiz] = useState<Business | null>(null);
+  const [productFormDraft, setProductFormDraft] = useState<ProductOrService | null>(null);
+  const [productDeleteId, setProductDeleteId] = useState<string | null>(null);
+  const [productDeleting, setProductDeleting] = useState(false);
+  const [productActionError, setProductActionError] = useState('');
 
   // Cascading loads for the edit modal
   useEffect(() => {
@@ -560,6 +583,8 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     setFormWebsite('');
     setFormHours('');
     setFormProducts([]);
+    setFormLogoUrl('');
+    setFormCoverUrl('');
     setFormErrors({});
     setFormServerError('');
   };
@@ -597,6 +622,8 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       website: formWebsite.trim() || undefined,
       fullAddress: formAddress.trim() ? sanitizeText(formAddress, 300) : undefined,
       operatingHours: formHours.trim() || undefined,
+      logoUrl: formLogoUrl.trim() || undefined,
+      coverUrl: formCoverUrl.trim() || undefined,
       products: formProducts.map((p) => ({
         name: sanitizeText(p.name, 120),
         description: sanitizeText(p.description || 'Quality offering.', 300),
@@ -639,6 +666,8 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     setEditWebsite(biz.website || '');
     setEditOperatingHours(biz.operatingHours || '');
     setEditPriceRange(biz.priceRange || '');
+    setEditLogoUrl(biz.logoImage || '');
+    setEditCoverUrl(biz.coverImage || '');
     setEditProducts(
       (biz.productsServices || []).map((p) => ({
         id: p.id,
@@ -686,7 +715,12 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       fullAddress: editAddress.trim() ? sanitizeText(editAddress, 300) : '',
       operatingHours: editOperatingHours.trim(),
       priceRange: editPriceRange.trim(),
+      logoUrl: editLogoUrl.trim(),
+      coverUrl: editCoverUrl.trim(),
       products: editProducts.map((p) => ({
+        // Real product ids let updateBusiness sync in place (preserving
+        // photos/discounts); 'draft-' ids insert as brand-new rows.
+        id: p.id.startsWith('draft-') ? undefined : p.id,
         name: sanitizeText(p.name, 120),
         description: sanitizeText(p.description || 'Quality offering.', 300),
         price: parsePrice(p.price),
@@ -714,6 +748,54 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     setDeleting(false);
     setDeleteConfirmId(null);
     if (editingBiz?.id === bizId) setEditingBiz(null);
+  };
+
+  // ============================================================
+  // DEDICATED PRODUCT MANAGEMENT (full-screen Add/Edit Product page)
+  // Saves go straight to business_products; afterwards the owned
+  // businesses (incl. products) are re-fetched so every list stays fresh.
+  // ============================================================
+  const handleSaveProduct = async (
+    payload: ProductFormPayload
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (!productFormBiz) return { success: false, error: 'No business selected.' };
+    setProductActionError('');
+
+    const result = productFormDraft
+      ? await updateProduct(productFormDraft.id, {
+          name: payload.name,
+          description: payload.description,
+          price: payload.price,
+          discountPrice: payload.discountPrice,
+          imageUrl: payload.imageUrl,
+          isAvailable: payload.isAvailable,
+        })
+      : await createProduct(productFormBiz.id, {
+          name: payload.name,
+          description: payload.description,
+          price: payload.price,
+          discountPrice: payload.discountPrice,
+          imageUrl: payload.imageUrl,
+          isAvailable: payload.isAvailable,
+        });
+
+    if (result.error) return { success: false, error: result.error };
+
+    if (onRefreshBusinesses) await onRefreshBusinesses();
+    return { success: true };
+  };
+
+  const handleConfirmDeleteProduct = async (productId: string) => {
+    setProductDeleting(true);
+    setProductActionError('');
+    const { error } = await deleteProduct(productId);
+    setProductDeleting(false);
+    setProductDeleteId(null);
+    if (error) {
+      setProductActionError(error);
+      return;
+    }
+    if (onRefreshBusinesses) await onRefreshBusinesses();
   };
 
   // ============================================================
@@ -771,13 +853,27 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           <p className={`text-xs sm:text-sm ${subTextCls}`}>Manage your listings, generate AI profiles, track real inquiries, orders, and conversations.</p>
         </div>
 
-        <button
-          onClick={() => setActiveTab('add-business')}
-          className="px-5 py-3 rounded-2xl bg-slate-900 hover:bg-slate-800 dark:bg-emerald-500 dark:hover:bg-emerald-400 text-white dark:text-slate-950 font-bold text-xs shadow-md flex items-center gap-2 cursor-pointer transition"
-        >
-          <PlusCircle className="w-4 h-4" />
-          <span>Add New Business Listing</span>
-        </button>
+        {oneBusinessLimitReached ? (
+          <div className={`px-5 py-3 rounded-2xl border text-xs font-bold flex items-center gap-2 ${
+            isDarkMode
+              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+              : 'bg-emerald-50 border-emerald-200 text-emerald-700'
+          }`}>
+            <CheckCircle2 className="w-4 h-4 shrink-0" />
+            <span className="max-w-[240px] leading-snug">
+              One business per account — you're managing{' '}
+              <strong>{userBusinesses[0]?.name || 'your listing'}</strong>
+            </span>
+          </div>
+        ) : (
+          <button
+            onClick={() => setActiveTab('add-business')}
+            className="px-5 py-3 rounded-2xl bg-slate-900 hover:bg-slate-800 dark:bg-emerald-500 dark:hover:bg-emerald-400 text-white dark:text-slate-950 font-bold text-xs shadow-md flex items-center gap-2 cursor-pointer transition"
+          >
+            <PlusCircle className="w-4 h-4" />
+            <span>Add New Business Listing</span>
+          </button>
+        )}
       </div>
 
       {/* Tabs */}
@@ -786,10 +882,12 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           <Building2 className="w-4 h-4" />
           <span>My Listings ({userBusinesses.length})</span>
         </button>
-        <button onClick={() => setActiveTab('add-business')} className={tabBtn('add-business')}>
-          <PlusCircle className="w-4 h-4" />
-          <span>Add Business + AI</span>
-        </button>
+        {!oneBusinessLimitReached && (
+          <button onClick={() => setActiveTab('add-business')} className={tabBtn('add-business')}>
+            <PlusCircle className="w-4 h-4" />
+            <span>Add Business + AI</span>
+          </button>
+        )}
         <button onClick={() => setActiveTab('analytics')} className={tabBtn('analytics')}>
           <BarChart3 className="w-4 h-4" />
           <span>Analytics</span>
@@ -878,6 +976,126 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                         <div className="text-emerald-400">{biz.reviewCount || 0}</div>
                       </div>
                     </div>
+
+                    {/* ===== Product management (dedicated + flow) ===== */}
+                    <div className={`mt-3 p-3 rounded-2xl border space-y-2.5 ${isDarkMode ? 'bg-slate-950/60 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={`text-[11px] font-extrabold uppercase flex items-center gap-1.5 ${subTextCls}`}>
+                          <Package className="w-4 h-4 text-emerald-400" />
+                          <span>Products ({biz.productsServices.length})</span>
+                        </span>
+                        <button
+                          onClick={() => {
+                            setProductFormBiz(biz);
+                            setProductFormDraft(null);
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-slate-950 font-black text-[11px] shadow flex items-center gap-1 cursor-pointer transition"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Add Product</span>
+                        </button>
+                      </div>
+
+                      {productActionError && (
+                        <p className="text-[11px] text-rose-400 font-bold flex items-center gap-1.5">
+                          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                          {productActionError}
+                        </p>
+                      )}
+
+                      {biz.productsServices.length === 0 ? (
+                        <p className={`text-[11px] ${subTextCls}`}>
+                          No products yet. Tap <strong>+ Add Product</strong> to create your first
+                          listing with a photo, price and optional discount.
+                        </p>
+                      ) : (
+                        <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                          {biz.productsServices.map((p) => {
+                            const hasDiscount =
+                              p.discountPrice != null &&
+                              p.numericPrice != null &&
+                              p.discountPrice > 0 &&
+                              p.discountPrice < p.numericPrice;
+                            const pct = hasDiscount
+                              ? Math.round((1 - p.discountPrice! / p.numericPrice!) * 100)
+                              : 0;
+                            return (
+                              <div
+                                key={p.id}
+                                className={`p-2 rounded-xl border flex items-center gap-2.5 ${
+                                  isDarkMode ? 'bg-slate-900 border-slate-800/80' : 'bg-white border-slate-200'
+                                }`}
+                              >
+                                {p.image ? (
+                                  <img
+                                    src={p.image}
+                                    alt={p.name}
+                                    className="w-10 h-10 rounded-lg object-cover border border-slate-700/60 shrink-0"
+                                  />
+                                ) : (
+                                  <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-slate-700 via-slate-800 to-emerald-950 flex items-center justify-center shrink-0">
+                                    <Package className="w-4 h-4 text-emerald-400" />
+                                  </div>
+                                )}
+
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-xs font-bold truncate flex items-center gap-1.5">
+                                    <span className={`truncate ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{p.name}</span>
+                                    {p.isAvailable === false && (
+                                      <span className="shrink-0 px-1.5 py-0.5 rounded bg-slate-500/15 text-slate-400 border border-slate-500/30 text-[9px] font-black uppercase">
+                                        Out of stock
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-[11px] flex items-center gap-1.5 flex-wrap">
+                                    {p.numericPrice != null ? (
+                                      <span className={`font-bold ${hasDiscount ? 'line-through opacity-60' : 'text-emerald-400'}`}>
+                                        PKR {p.numericPrice.toLocaleString('en-PK')}
+                                      </span>
+                                    ) : (
+                                      <span className={subTextCls}>Price on inquiry</span>
+                                    )}
+                                    {hasDiscount && (
+                                      <>
+                                        <span className="font-bold text-emerald-400">
+                                          PKR {p.discountPrice!.toLocaleString('en-PK')}
+                                        </span>
+                                        <span className="px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-400 border border-rose-500/30 text-[9px] font-black">
+                                          -{pct}%
+                                        </span>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <button
+                                    onClick={() => {
+                                      setProductFormBiz(biz);
+                                      setProductFormDraft(p);
+                                    }}
+                                    className="p-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 transition cursor-pointer"
+                                    title={`Edit ${p.name}`}
+                                  >
+                                    <Edit3 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      setProductActionError('');
+                                      setProductDeleteId(p.id);
+                                    }}
+                                    className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 transition cursor-pointer"
+                                    title={`Delete ${p.name}`}
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   <div className={`pt-3 border-t flex items-center justify-between text-xs font-semibold ${dividerCls}`}>
@@ -912,7 +1130,29 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       )}
 
       {/* ================= 2. ADD BUSINESS ================= */}
-      {activeTab === 'add-business' && (
+      {activeTab === 'add-business' && oneBusinessLimitReached && (
+        <div className={`p-10 rounded-3xl border text-center space-y-4 ${cardCls}`}>
+          <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center mx-auto">
+            <CheckCircle2 className="w-7 h-7" />
+          </div>
+          <h3 className="text-lg font-bold">One business per account</h3>
+          <p className={`text-xs max-w-md mx-auto leading-relaxed ${subTextCls}`}>
+            Each BizNest account manages a single business listing. You're already managing{' '}
+            <strong className="text-emerald-400">{userBusinesses[0]?.name}</strong> — open{' '}
+            <strong>My Listings</strong> to edit its details, products, photos and more. To list a
+            different business, delete the current listing first.
+          </p>
+          <button
+            onClick={() => setActiveTab('my-businesses')}
+            className="px-6 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs shadow-lg cursor-pointer inline-flex items-center gap-2"
+          >
+            <Building2 className="w-4 h-4" />
+            <span>Go to My Listing</span>
+          </button>
+        </div>
+      )}
+
+      {activeTab === 'add-business' && !oneBusinessLimitReached && (
         <div className={`p-6 sm:p-8 rounded-3xl border ${cardCls}`}>
           <div className={`mb-6 pb-4 border-b ${dividerCls}`}>
             <h2 className="text-xl font-extrabold">List Your Business on BizNest</h2>
@@ -1114,6 +1354,30 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   value={formWebsite}
                   onChange={(e) => setFormWebsite(e.target.value)}
                   className={`w-full mt-1.5 p-3 rounded-xl border text-xs ${inputCls}`}
+                />
+              </div>
+
+              {/* Business images (Supabase Storage) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <ImageUploadField
+                  label="Business Logo"
+                  hint="Square image looks best · JPG/PNG/WEBP/GIF · max 5 MB"
+                  bucket="business-images"
+                  nameHint="logo"
+                  value={formLogoUrl}
+                  onChange={setFormLogoUrl}
+                  isDarkMode={isDarkMode}
+                  previewClassName="w-20 h-20 rounded-2xl"
+                />
+                <ImageUploadField
+                  label="Cover Image"
+                  hint="Wide banner image for your storefront · max 5 MB"
+                  bucket="business-images"
+                  nameHint="cover"
+                  value={formCoverUrl}
+                  onChange={setFormCoverUrl}
+                  isDarkMode={isDarkMode}
+                  previewClassName="w-20 h-20 rounded-2xl"
                 />
               </div>
 
@@ -1677,6 +1941,30 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   />
                 </div>
 
+                {/* Business images (Supabase Storage) */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <ImageUploadField
+                    label="Business Logo"
+                    hint="Square image looks best · JPG/PNG/WEBP/GIF · max 5 MB"
+                    bucket="business-images"
+                    nameHint="logo"
+                    value={editLogoUrl}
+                    onChange={setEditLogoUrl}
+                    isDarkMode={isDarkMode}
+                    previewClassName="w-20 h-20 rounded-2xl"
+                  />
+                  <ImageUploadField
+                    label="Cover Image"
+                    hint="Wide banner image for your storefront · max 5 MB"
+                    bucket="business-images"
+                    nameHint="cover"
+                    value={editCoverUrl}
+                    onChange={setEditCoverUrl}
+                    isDarkMode={isDarkMode}
+                    previewClassName="w-20 h-20 rounded-2xl"
+                  />
+                </div>
+
                 <ProductEditor products={editProducts} onChange={setEditProducts} isDarkMode={isDarkMode} />
 
                 {editServerError && (
@@ -1753,6 +2041,60 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 >
                   {deleting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   <span>{deleting ? 'Deleting...' : 'Confirm Delete'}</span>
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ================= DEDICATED PRODUCT FORM PAGE (full-screen) ================= */}
+      {productFormBiz && (
+        <ProductFormPage
+          business={productFormBiz}
+          product={productFormDraft}
+          isDarkMode={isDarkMode}
+          onSave={handleSaveProduct}
+          onClose={() => {
+            setProductFormBiz(null);
+            setProductFormDraft(null);
+          }}
+        />
+      )}
+
+      {/* ================= PRODUCT DELETE CONFIRMATION ================= */}
+      <AnimatePresence>
+        {productDeleteId && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="max-w-md w-full p-6 rounded-3xl bg-slate-900 border border-rose-500/30 text-white shadow-2xl space-y-4"
+            >
+              <div className="flex items-center gap-3 text-rose-400">
+                <AlertTriangle className="w-8 h-8" />
+                <h3 className="text-lg font-black">Delete Product?</h3>
+              </div>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                This permanently removes the product from your storefront, including its photo,
+                price and discount. Customers will no longer see it.
+              </p>
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  onClick={() => setProductDeleteId(null)}
+                  disabled={productDeleting}
+                  className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold hover:text-white cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => handleConfirmDeleteProduct(productDeleteId)}
+                  disabled={productDeleting}
+                  className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-extrabold shadow-lg flex items-center gap-2 cursor-pointer disabled:opacity-60"
+                >
+                  {productDeleting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>{productDeleting ? 'Deleting…' : 'Confirm Delete'}</span>
                 </button>
               </div>
             </motion.div>

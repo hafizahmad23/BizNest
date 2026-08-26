@@ -75,6 +75,16 @@ Open **Supabase Dashboard → SQL Editor → New Query**, paste the contents of
 [`supabase/migration.sql`](supabase/migration.sql), and run it once.
 It is idempotent, so re-running it is safe.
 
+Storefront upgrade files (run in this order, both idempotent):
+
+1. [`supabase/feature_storefront.sql`](supabase/feature_storefront.sql) —
+   product discount column, public image buckets (`product-images`,
+   `business-images`) with owner-only writes, and the one-business-per-account
+   unique index (includes a duplicate-owner audit SELECT to verify first).
+2. [`supabase/cities_bulk.sql`](supabase/cities_bulk.sql) — ~250 additional
+   towns/tehsil HQs across every district (Kasur district alone gains 10
+   towns).
+
 ### 4. Run the app locally
 
 ```bash

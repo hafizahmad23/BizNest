@@ -7,7 +7,7 @@ import { LiveStats } from './components/LiveStats';
 import { CategoryGrid } from './components/CategoryGrid';
 import { FeaturedBusinesses } from './components/FeaturedBusinesses';
 import { PakistanMap } from './components/PakistanMap';
-import { BusinessDetailModal } from './components/BusinessDetailModal';
+import { BusinessProfilePage } from './components/BusinessProfilePage';
 import { CompareModal } from './components/CompareModal';
 import { AiMatchmakerModal } from './components/AiMatchmakerModal';
 import { UserDashboard } from './components/UserDashboard';
@@ -88,9 +88,31 @@ type AppView =
   | 'pricing'
   | 'dashboard'
   | 'admin'
-  | 'contact';
+  | 'contact'
+  | 'business-profile';
 
 const GUEST_CART_KEY = 'biznest_guest_cart_v1';
+
+// Theme persistence: light is the site default; the user's explicit choice
+// (light/dark) survives reloads via localStorage.
+const THEME_KEY = 'biznest_theme_v1';
+
+function loadInitialTheme(): boolean {
+  try {
+    const saved = localStorage.getItem(THEME_KEY);
+    return saved === 'dark'; // light (false) for fresh visitors
+  } catch {
+    return false; // storage unavailable → light default
+  }
+}
+
+function persistTheme(isDark: boolean) {
+  try {
+    localStorage.setItem(THEME_KEY, isDark ? 'dark' : 'light');
+  } catch {
+    /* storage unavailable — choice just won't persist */
+  }
+}
 
 function loadGuestCart(): CartItem[] {
   try {
@@ -115,7 +137,7 @@ export default function App() {
   // CORE UI STATE
   // --------------------------------------------------
   const [loading, setLoading] = useState(true);
-  const [isDarkMode, setIsDarkMode] = useState(true);
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(loadInitialTheme);
   const [currentView, setCurrentView] = useState<AppView>('home');
 
   // --------------------------------------------------
@@ -165,6 +187,10 @@ export default function App() {
   const [chatBusiness, setChatBusiness] = useState<Business | null>(null);
   const [chatConversation, setChatConversation] = useState<ChatConversation | null>(null);
   const [selectedBusiness, setSelectedBusiness] = useState<Business | null>(null);
+  // Where the storefront profile page's Back button returns to.
+  const profileReturnViewRef = useRef<AppView>('home');
+  // Scroll position to restore when the profile page closes.
+  const profileScrollYRef = useRef(0);
   const [comparedIds, setComparedIds] = useState<string[]>([]);
   const [isCompareOpen, setIsCompareOpen] = useState(false);
   const [isMatchmakerOpen, setIsMatchmakerOpen] = useState(false);
@@ -365,23 +391,20 @@ export default function App() {
 
   // ==================================================
   // DEEP LINKS (?business=, ?city=, ?category=, ?search=)
+  // ?business=<id> opens the storefront profile page directly.
   // ==================================================
   useEffect(() => {
     if (window.location.pathname !== '/') return;
 
     const params = new URLSearchParams(window.location.search);
     const businessId = params.get('business');
-    if (businessId) {
-      void (async () => {
-        const { data } = await fetchBusinessById(businessId);
-        if (data) setSelectedBusiness(data);
-      })();
-    }
+    let filtersApplied = false;
 
     const city = params.get('city');
     const category = params.get('category');
     const search = params.get('search');
     if (city !== null || category !== null || search !== null) {
+      filtersApplied = true;
       setFilterState((prev) => ({
         ...prev,
         city: city !== null ? city || 'all' : prev.city,
@@ -389,6 +412,29 @@ export default function App() {
         searchQuery: search !== null ? search || '' : prev.searchQuery,
       }));
       setCurrentView('businesses');
+    }
+
+    if (businessId) {
+      void (async () => {
+        const { data } = await fetchBusinessById(businessId);
+        if (data) {
+          // Deep link lands directly on the storefront page. Back returns to
+          // the filtered list when city/category/search were also given,
+          // otherwise to home.
+          profileReturnViewRef.current = filtersApplied ? 'businesses' : 'home';
+          setSelectedBusiness(data);
+          setCurrentView('business-profile');
+          try {
+            window.history.replaceState(
+              { biznestBusiness: data.id },
+              '',
+              window.location.href
+            );
+          } catch {
+            /* history API unavailable — back button falls back to view restore */
+          }
+        }
+      })();
     }
   }, []);
 
@@ -411,7 +457,12 @@ export default function App() {
   // ==================================================
 
   const handleFinishLoader = () => setLoading(false);
-  const handleToggleTheme = () => setIsDarkMode((p) => !p);
+  const handleToggleTheme = () =>
+    setIsDarkMode((p) => {
+      const next = !p;
+      persistTheme(next);
+      return next;
+    });
 
   const handleNavigate = (view: AppView) => {
     setCurrentView(view);
@@ -523,18 +574,102 @@ export default function App() {
   };
 
   // ==================================================
-  // BUSINESS DETAIL (fresh fetch incl. reviews + view count)
+  // BUSINESS STOREFRONT PAGE (full-page successor of the old modal)
+  //  - Opens as the dedicated 'business-profile' view from EVERY entry
+  //    point (cards, search, saved list, matchmaker, dashboard previews).
+  //  - A history entry is pushed so the browser Back button closes the
+  //    page and restores the previous view.
+  //  - Fresh fetch incl. reviews + view-count increment (as before).
   // ==================================================
 
   const handleOpenBusiness = async (business: Business) => {
+    if (currentView !== 'business-profile') {
+      profileReturnViewRef.current = currentView;
+      // Remember scroll so Back returns to the same spot in the list.
+      profileScrollYRef.current = window.scrollY;
+    }
     setSelectedBusiness(business);
+    setCurrentView('business-profile');
+    window.scrollTo({ top: 0 });
     void incrementBusinessViews(business.id);
+
+    // Push a history entry carrying the marker so browser Back closes the
+    // profile (the popstate effect below performs the actual close).
+    try {
+      const params = new URLSearchParams(window.location.search);
+      params.set('business', business.id);
+      window.history.pushState({ biznestBusiness: business.id }, '', `/?${params.toString()}`);
+    } catch {
+      /* history API unavailable — in-page Back still works */
+    }
+
     const { data } = await fetchBusinessById(business.id);
     if (data) {
-      setSelectedBusiness({ ...data, reviews: data.reviews });
+      // Only enrich if the same business page is still open (the user may
+      // have pressed Back before this resolves).
+      setSelectedBusiness((prev) => (prev && prev.id === data.id ? data : prev));
       setBusinesses((prev) => prev.map((b) => (b.id === data.id ? { ...b, ...data } : b)));
     }
   };
+
+  /** Close the profile page and return to the previous view. */
+  const closeBusinessProfile = useCallback(() => {
+    setSelectedBusiness(null);
+    setCurrentView((prev) => (prev === 'business-profile' ? profileReturnViewRef.current : prev));
+    // Restore the list scroll position after the returning view paints.
+    const y = profileScrollYRef.current;
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => window.scrollTo({ top: y }))
+    );
+    // Drop ?business= from the address bar so a reload after closing does
+    // not re-open the profile page.
+    try {
+      if (window.location.pathname === '/') {
+        const params = new URLSearchParams(window.location.search);
+        if (params.has('business')) {
+          params.delete('business');
+          const qs = params.toString();
+          window.history.replaceState(
+            window.history.state,
+            '',
+            qs ? `/?${qs}` : '/'
+          );
+        }
+      }
+    } catch {
+      /* history API unavailable */
+    }
+  }, []);
+
+  /** In-page Back button: prefer history.back() (pops our pushed entry).
+   *  When there is nothing to pop (fresh deep link in a new tab),
+   *  history.back() is a no-op — the fallback timer closes the page
+   *  directly so the button always works. */
+  const handleProfileBack = useCallback(() => {
+    const state = window.history.state as { biznestBusiness?: string } | null;
+    if (state && state.biznestBusiness) {
+      let closed = false;
+      const onClose = () => {
+        closed = true;
+      };
+      window.addEventListener('popstate', onClose, { once: true });
+      window.history.back();
+      window.setTimeout(() => {
+        window.removeEventListener('popstate', onClose);
+        if (!closed) closeBusinessProfile();
+      }, 350);
+    } else {
+      closeBusinessProfile();
+    }
+  }, [closeBusinessProfile]);
+
+  // Browser Back / popstate closes the storefront profile page.
+  useEffect(() => {
+    if (currentView !== 'business-profile') return;
+    const onPopState = () => closeBusinessProfile();
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [currentView, closeBusinessProfile]);
 
   // ==================================================
   // SAVED BUSINESSES (persisted in Supabase)
@@ -794,6 +929,31 @@ export default function App() {
     setBusinesses((prev) => prev.filter((b) => b.id !== businessId));
   };
 
+  /**
+   * Re-fetch the signed-in user's owned businesses (incl. fresh product
+   * lists) and merge them into the public list. Used by the dashboard's
+   * dedicated product management flow so saves show up everywhere at once.
+   */
+  const refreshMyBusinesses = useCallback(async () => {
+    const userId = currentUser?.id;
+    if (!userId) return;
+    const ownedRes = await fetchBusinessesByOwner(userId);
+    const owned = ownedRes.data;
+    if (owned) {
+      setMyBusinesses(owned);
+      setBusinesses((prev) => {
+        const map = new Map(prev.map((b) => [b.id, b]));
+        owned.forEach((b) => map.set(b.id, b));
+        return Array.from(map.values());
+      });
+      setSelectedBusiness((prev) => {
+        if (!prev) return prev;
+        const fresh = owned.find((b) => b.id === prev.id);
+        return fresh ? { ...fresh, reviews: prev.reviews } : prev;
+      });
+    }
+  }, [currentUser?.id]);
+
   // ==================================================
   // ADMIN ACTIONS (RLS + is_admin() verified server-side)
   // ==================================================
@@ -1048,6 +1208,7 @@ export default function App() {
         onMarkNotificationRead={handleMarkNotificationRead}
         onMarkAllNotificationsRead={handleMarkAllNotificationsRead}
         onClearNotifications={handleClearNotifications}
+        ownedBusinessCount={myBusinesses.length}
       />
 
       <main className="min-h-screen">
@@ -1139,7 +1300,25 @@ export default function App() {
             onDeleteBusiness={handleDeleteBusiness}
             onUpgradeToBusiness={handleUpgradeToBusiness}
             onOpenConversation={handleOpenConversation}
+            onRefreshBusinesses={refreshMyBusinesses}
             isDarkMode={isDarkMode}
+          />
+        )}
+
+        {currentView === 'business-profile' && selectedBusiness && (
+          <BusinessProfilePage
+            business={selectedBusiness}
+            onBack={handleProfileBack}
+            onSubmitLead={handleSubmitLead}
+            onSubmitReview={handleSubmitReview}
+            isDarkMode={isDarkMode}
+            currentUser={currentUser}
+            onOpenChat={handleOpenChatWithBusiness}
+            onAddToCart={handleAddToCart}
+            onOpenDashboard={() => handleNavigate('dashboard')}
+            onToggleSave={handleToggleSaveBusiness}
+            isSaved={currentUser?.savedBusinessIds.includes(selectedBusiness.id) || false}
+            onRequireAuth={() => setIsAuthOpen(true)}
           />
         )}
 
@@ -1201,7 +1380,10 @@ export default function App() {
         onUpgradeToBusiness={handleUpgradeToBusiness}
         orders={orders}
         savedBusinesses={savedBusinessesList}
-        onSelectBusiness={(business) => handleOpenBusiness(business)}
+        onSelectBusiness={(business) => {
+          setIsSettingsOpen(false);
+          void handleOpenBusiness(business);
+        }}
         onOpenDashboard={() => handleNavigate('dashboard')}
         isDarkMode={isDarkMode}
       />
@@ -1246,26 +1428,6 @@ export default function App() {
         isDarkMode={isDarkMode}
       />
 
-      {selectedBusiness && (
-        <BusinessDetailModal
-          business={selectedBusiness}
-          onClose={() => setSelectedBusiness(null)}
-          onSubmitLead={handleSubmitLead}
-          onSubmitReview={handleSubmitReview}
-          isDarkMode={isDarkMode}
-          currentUser={currentUser}
-          onOpenChat={handleOpenChatWithBusiness}
-          onAddToCart={handleAddToCart}
-          onOpenDashboard={() => handleNavigate('dashboard')}
-          onToggleSave={handleToggleSaveBusiness}
-          isSaved={currentUser?.savedBusinessIds.includes(selectedBusiness.id) || false}
-          onRequireAuth={() => {
-            setSelectedBusiness(null);
-            setIsAuthOpen(true);
-          }}
-        />
-      )}
-
       {isCompareOpen && (
         <CompareModal
           businesses={comparedBusinesses}
@@ -1282,7 +1444,10 @@ export default function App() {
         isOpen={isMatchmakerOpen}
         onClose={() => setIsMatchmakerOpen(false)}
         allBusinesses={businesses}
-        onSelectBusiness={(business) => handleOpenBusiness(business)}
+        onSelectBusiness={(business) => {
+          setIsMatchmakerOpen(false);
+          void handleOpenBusiness(business);
+        }}
         isDarkMode={isDarkMode}
       />
 
