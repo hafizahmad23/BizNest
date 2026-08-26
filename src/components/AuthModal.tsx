@@ -11,6 +11,7 @@ import {
 } from '../lib/supabaseAuth';
 
 import type { User as UserType } from '../types';
+import { validateFullName } from '../lib/validation';
 
 import {
   X,
@@ -130,6 +131,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] =
     useState('');
+  const [nameError, setNameError] = useState('');
 
   /* ======================================================
      HELPERS
@@ -144,6 +146,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const clearMessages = () => {
     setError('');
     setSuccessMessage('');
+    setNameError('');
   };
 
   const switchMode = (
@@ -249,10 +252,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     clearMessages();
 
-    if (!name.trim()) {
-      setError('Please enter your full name.');
+    const fullNameIssue = validateFullName(name);
+    if (fullNameIssue) {
+      setNameError(fullNameIssue);
+      setError(fullNameIssue);
       return;
     }
+    setNameError('');
 
     if (
       !email.trim() ||
@@ -931,17 +937,38 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
                     <input
                       type="text"
+                      name="fullName"
+                      autoComplete="name"
                       required
+                      minLength={3}
+                      maxLength={60}
                       placeholder="e.g. Ali Hassan"
                       value={name}
-                      onChange={(e) =>
-                        setName(
-                          e.target.value
-                        )
-                      }
-                      className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-emerald-500"
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        setName(next);
+                        if (nameError && !validateFullName(next)) {
+                          setNameError('');
+                        }
+                      }}
+                      onBlur={() => {
+                        const issue = validateFullName(name);
+                        setNameError(issue || '');
+                      }}
+                      aria-invalid={Boolean(nameError)}
+                      aria-describedby={nameError ? 'signup-name-error' : undefined}
+                      className={`w-full pl-9 pr-3 py-2.5 rounded-xl bg-slate-950 text-xs text-white focus:outline-none ${
+                        nameError
+                          ? 'border border-rose-500 focus:border-rose-400'
+                          : 'border border-slate-800 focus:border-emerald-500'
+                      }`}
                     />
                   </div>
+                  {nameError && (
+                    <p id="signup-name-error" className="mt-1 text-[11px] font-medium text-rose-400">
+                      {nameError}
+                    </p>
+                  )}
                 </div>
 
                 {/* Email */}

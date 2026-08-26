@@ -146,8 +146,12 @@ export const WelcomeAuthScreen: React.FC<WelcomeAuthScreenProps> = ({
     e.preventDefault();
     setSignupError('');
 
-    if (!signupName.trim()) {
-      setSignupError('Please enter your full name.');
+    if (!signupName.trim() || signupName.trim().length < 3) {
+      setSignupError('Please enter your full name (at least 3 characters).');
+      return;
+    }
+    if (signupName.trim().length > 60) {
+      setSignupError('Full name must be 60 characters or fewer.');
       return;
     }
 
@@ -664,7 +668,11 @@ export const WelcomeAuthScreen: React.FC<WelcomeAuthScreenProps> = ({
                       <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
                       <input
                         type="text"
+                        name="fullName"
+                        autoComplete="name"
                         required
+                        minLength={3}
+                        maxLength={60}
                         value={signupName}
                         onChange={(e) => setSignupName(e.target.value)}
                         placeholder="e.g. Muhammad Ali"
