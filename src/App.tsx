@@ -21,6 +21,7 @@ import { AccountSettingsModal } from './components/AccountSettingsModal';
 import { CartDrawer } from './components/CartDrawer';
 import { CheckoutModal } from './components/CheckoutModal';
 import { ChatModal } from './components/ChatModal';
+import { FloatingChatInbox } from './components/FloatingChatInbox';
 import { SEOHead } from './components/SEOHead';
 import { WelcomeAuthScreen } from './components/WelcomeAuthScreen';
 import ResetPassword from './components/ResetPassword';
@@ -1417,6 +1418,12 @@ export default function App() {
           setIsAuthOpen(true);
         }}
         isDarkMode={isDarkMode}
+      />
+
+      <FloatingChatInbox
+        currentUser={currentUser}
+        isDarkMode={isDarkMode}
+        onRequireAuth={() => setIsAuthOpen(true)}
       />
 
       <ChatModal

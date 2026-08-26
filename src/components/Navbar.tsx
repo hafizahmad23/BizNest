@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Building2, Search, PlusCircle, LayoutDashboard, ShieldAlert, Moon, Sun, Menu, X, MapPin, 
@@ -609,7 +610,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               inside the `hidden md:flex` desktop cluster, so on ~360px phones
               the bell toggled state but nothing ever rendered. This sheet is
               fixed-viewport, scrollable, and never clipped. */}
-          {notifOpen && (
+          {notifOpen && typeof document !== 'undefined' && createPortal(
             <div className="fixed inset-0 z-[80] md:hidden" role="dialog" aria-label="Notifications">
               {/* Backdrop — tap anywhere to close */}
               <div
@@ -675,7 +676,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </div>
               </div>
             </div>
-          )}
+          , document.body)}
         </div>
       </div>
 

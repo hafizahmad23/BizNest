@@ -1107,7 +1107,25 @@ export function subscribeToMessages(
   };
 }
 
+
+export async function markMessagesRead(conversationId: string): Promise<DbResult<void>> {
+  if (!isSupabaseConfigured) return { data: null, error: null };
+  const { userId, error: authError } = await getSessionUserId();
+  if (authError || !userId) return { data: null, error: authError };
+
+  const { error } = await supabase
+    .from('messages')
+    .update({ is_read: true })
+    .eq('conversation_id', conversationId)
+    .neq('sender_id', userId)
+    .eq('is_read', false);
+
+  if (error) return { data: null, error: err(error.message) };
+  return { data: undefined, error: null };
+}
+
 /** All conversations for the current user — both as customer and as owner. */
+
 export async function fetchUserConversations(): Promise<DbResult<ChatConversation[]>> {
   const { userId, error: authError } = await getSessionUserId();
   if (authError || !userId) return { data: [], error: null };
@@ -1148,18 +1166,23 @@ export async function fetchUserConversations(): Promise<DbResult<ChatConversatio
     const ids = conversations.map((c) => c.id);
     const { data: msgs } = await supabase
       .from('messages')
-      .select('conversation_id, content, created_at')
+      .select('conversation_id, content, created_at, sender_id, is_read')
       .in('conversation_id', ids)
       .order('created_at', { ascending: false });
 
     const lastByConv = new Map<string, string>();
+    const unreadCountByConv = new Map<string, number>();
     (msgs || []).forEach((m: any) => {
       if (!lastByConv.has(m.conversation_id)) {
         lastByConv.set(m.conversation_id, m.content);
       }
+      if (!m.is_read && m.sender_id !== userId) {
+        unreadCountByConv.set(m.conversation_id, (unreadCountByConv.get(m.conversation_id) || 0) + 1);
+      }
     });
     conversations.forEach((c) => {
       c.lastMessage = lastByConv.get(c.id) || '';
+      c.unreadCount = unreadCountByConv.get(c.id) || 0;
     });
   }
 
@@ -2024,4 +2047,41 @@ export async function moderateReview(
 
   if (error) return { data: null, error: err(error.message) };
   return { data: null, error: null };
+}
+
+
+/** Subscribe to ALL message inserts (filtered client-side by known conversation IDs). */
+export function subscribeToUserMessages(
+  callback: (message: any) => void
+): () => void {
+  if (!isSupabaseConfigured) return () => {};
+
+  const channel = supabase
+    .channel('messages:user')
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'messages',
+      },
+      (payload: any) => {
+        const row = payload.new;
+        callback({
+          id: row.id,
+          conversationId: row.conversation_id,
+          senderId: row.sender_id,
+          senderName: '', // Usually resolved later or contextually
+          senderRole: 'customer',
+          text: row.content,
+          timestamp: formatDbTime(row.created_at),
+          isRead: row.is_read,
+        });
+      }
+    )
+    .subscribe();
+
+  return () => {
+    void supabase.removeChannel(channel);
+  };
 }
