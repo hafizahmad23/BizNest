@@ -68,7 +68,31 @@ export interface CreateBusinessInput {
   fullAddress?: string;
   operatingHours?: string;
   priceRange?: string;
-  products?: { name: string; description: string; price?: number; imageUrl?: string }[];
+  logoUrl?: string; // public Supabase Storage URL (business-images bucket)
+  coverUrl?: string; // public Supabase Storage URL (business-images bucket)
+  products?: { id?: string; name: string; description: string; price?: number; imageUrl?: string }[];
+}
+
+export interface ProductInput {
+  name: string;
+  description?: string;
+  price: number; // required, PKR
+  discountPrice?: number | null; // optional sale price, must be < price
+  imageUrl?: string | null; // public Supabase Storage URL (product-images)
+  isAvailable?: boolean;
+}
+
+/** One business listing per account (enforced by DB index too — see
+ *  supabase/feature_storefront.sql). Shared with the UI for clear errors. */
+export const ONE_BUSINESS_PER_ACCOUNT_ERROR =
+  'Each BizNest account can manage one business listing. You already have a listing — open your dashboard to edit it, or delete it first to create a new one.';
+
+function isDuplicateOwnerDbError(error: any): boolean {
+  // 23505 = unique_violation. The owner unique index is the only unique
+  // constraint on businesses that can collide on insert (name is not unique).
+  return Boolean(
+    error && (error.code === '23505' || String(error.message || '').includes('duplicate key'))
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -137,13 +161,18 @@ function mapOperatingHours(value: any): string {
 
 function mapProductRow(row: any): ProductOrService {
   const priceNum = row.price != null ? Number(row.price) : undefined;
+  const discountNum = row.discount_price != null ? Number(row.discount_price) : undefined;
   return {
     id: row.id,
     name: row.name,
     description: row.description || '',
     numericPrice: priceNum,
     price: priceNum != null ? `PKR ${priceNum.toLocaleString('en-PK')}` : undefined,
+    discountPrice: discountNum,
+    discountedPrice:
+      discountNum != null ? `PKR ${discountNum.toLocaleString('en-PK')}` : undefined,
     image: row.image_url || undefined,
+    isAvailable: row.is_available !== false,
   };
 }
 
@@ -343,6 +372,17 @@ export async function createBusiness(input: CreateBusinessInput): Promise<DbResu
   const { userId, error: authError } = await getSessionUserId();
   if (authError || !userId) return { data: null, error: authError };
 
+  // ONE BUSINESS PER ACCOUNT — client-side pre-check for a clear message.
+  // The guarded UNIQUE index (supabase/feature_storefront.sql) is the real
+  // enforcement; this just makes the error friendly instead of a DB message.
+  const { count: ownedCount } = await supabase
+    .from('businesses')
+    .select('id', { count: 'exact', head: true })
+    .eq('owner_id', userId);
+  if ((ownedCount ?? 0) >= 1) {
+    return { data: null, error: ONE_BUSINESS_PER_ACCOUNT_ERROR };
+  }
+
   const insert = {
     owner_id: userId, // ALWAYS from the auth session — never from caller input
     name: sanitizeText(input.name, 100),
@@ -359,6 +399,8 @@ export async function createBusiness(input: CreateBusinessInput): Promise<DbResu
     full_address: sanitizeText(input.fullAddress || '', 300) || null,
     operating_hours: input.operatingHours ? { text: sanitizeText(input.operatingHours, 120) } : null,
     price_range: sanitizeText(input.priceRange || '', 60) || null,
+    logo_url: sanitizeText(input.logoUrl || '', 500) || null,
+    cover_url: sanitizeText(input.coverUrl || '', 500) || null,
     // moderation-sensitive fields use DB defaults:
     // status='pending', is_verified=false, is_featured=false, is_premium=false,
     // rating=0, review_count=0, views_count=0, leads_count=0
@@ -370,7 +412,12 @@ export async function createBusiness(input: CreateBusinessInput): Promise<DbResu
     .select(BUSINESS_SELECT)
     .single();
 
-  if (error) return { data: null, error: err(error.message) };
+  if (error) {
+    if (isDuplicateOwnerDbError(error)) {
+      return { data: null, error: ONE_BUSINESS_PER_ACCOUNT_ERROR };
+    }
+    return { data: null, error: err(error.message) };
+  }
 
   // Optional initial products/services
   if (input.products && input.products.length > 0) {
@@ -429,27 +476,64 @@ export async function updateBusiness(
   if (updates.operatingHours !== undefined)
     patch.operating_hours = updates.operatingHours ? { text: sanitizeText(updates.operatingHours, 120) } : null;
   if (updates.priceRange !== undefined) patch.price_range = sanitizeText(updates.priceRange, 60) || null;
+  if (updates.logoUrl !== undefined) patch.logo_url = sanitizeText(updates.logoUrl || '', 500) || null;
+  if (updates.coverUrl !== undefined) patch.cover_url = sanitizeText(updates.coverUrl || '', 500) || null;
   // NEVER patch: status, is_verified, is_featured, is_premium, owner_id,
   // rating, review_count (DB triggers protect these server-side too)
 
   const { error } = await supabase.from('businesses').update(patch).eq('id', id);
   if (error) return { data: null, error: err(error.message) };
 
-  // Replace products if caller supplied a list
+  // Sync the products list if the caller supplied one. This is a SYNC, not
+  // a delete-all+reinsert: rows submitted with their existing product id are
+  // UPDATED in place (so photo, discount price and availability added via
+  // the dedicated product page survive), removed rows are deleted, and
+  // brand-new rows are inserted.
   if (updates.products) {
-    await supabase.from('business_products').delete().eq('business_id', id);
-    const rows = updates.products
-      .filter((p) => p.name && p.name.trim())
-      .map((p, idx) => ({
-        business_id: id,
+    const { data: existingRows, error: listError } = await supabase
+      .from('business_products')
+      .select('id')
+      .eq('business_id', id);
+    if (listError) return { data: null, error: err(listError.message) };
+
+    const existingIds = new Set((existingRows || []).map((r: any) => r.id));
+    const submitted = updates.products.filter((p) => p.name && p.name.trim());
+    const keptIds = new Set(
+      submitted.map((p) => p.id).filter((pid): pid is string => Boolean(pid && existingIds.has(pid)))
+    );
+
+    const removedIds = [...existingIds].filter((pid) => !keptIds.has(pid));
+    if (removedIds.length > 0) {
+      const { error: delError } = await supabase
+        .from('business_products')
+        .delete()
+        .in('id', removedIds);
+      if (delError) return { data: null, error: err(delError.message) };
+    }
+
+    let order = 0;
+    for (const p of submitted) {
+      const fields = {
         name: sanitizeText(p.name, 140),
-        description: sanitizeMultiline(p.description || '', 1000),
+        description: sanitizeMultiline(p.description || '', 1000) || null,
         price: typeof p.price === 'number' && p.price > 0 ? p.price : null,
-        image_url: p.imageUrl || null,
-        display_order: idx,
-      }));
-    if (rows.length > 0) {
-      await supabase.from('business_products').insert(rows);
+        display_order: order++,
+      };
+
+      if (p.id && keptIds.has(p.id)) {
+        const { error: updError } = await supabase
+          .from('business_products')
+          .update(fields)
+          .eq('id', p.id);
+        if (updError) return { data: null, error: err(updError.message) };
+      } else {
+        const { error: insError } = await supabase.from('business_products').insert({
+          ...fields,
+          business_id: id,
+          image_url: p.imageUrl || null,
+        });
+        if (insError) return { data: null, error: err(insError.message) };
+      }
     }
   }
 
@@ -503,6 +587,124 @@ export async function deleteBusiness(id: string): Promise<DbResult<{ id: string 
 export async function incrementBusinessViews(id: string): Promise<DbResult<null>> {
   if (!isSupabaseConfigured) return notConfigured();
   const { error } = await supabase.rpc('increment_business_views', { biz_id: id });
+  if (error) return { data: null, error: err(error.message) };
+  return { data: null, error: null };
+}
+
+// ============================================================================
+// PRODUCTS (dedicated add/edit/delete flow — complements the legacy
+// products[] list replace used by createBusiness/updateBusiness)
+// ============================================================================
+
+/** Ownership check used by every product write (RLS re-enforces too). */
+async function assertBusinessOwnership(
+  businessId: string
+): Promise<{ userId: string | null; error: string | null }> {
+  const { userId, error: authError } = await getSessionUserId();
+  if (authError || !userId) return { userId: null, error: authError };
+
+  const { data: existing, error: fetchError } = await supabase
+    .from('businesses')
+    .select('owner_id')
+    .eq('id', businessId)
+    .maybeSingle();
+
+  if (fetchError) return { userId: null, error: err(fetchError.message) };
+  if (!existing) return { userId: null, error: 'Business not found.' };
+  if (existing.owner_id !== userId) {
+    return { userId: null, error: 'You can only manage products of your own business.' };
+  }
+  return { userId, error: null };
+}
+
+export async function createProduct(
+  businessId: string,
+  input: ProductInput
+): Promise<DbResult<Business>> {
+  const { error: ownError } = await assertBusinessOwnership(businessId);
+  if (ownError) return { data: null, error: ownError };
+
+  const { count: existingCount } = await supabase
+    .from('business_products')
+    .select('id', { count: 'exact', head: true })
+    .eq('business_id', businessId);
+
+  const { error } = await supabase.from('business_products').insert({
+    business_id: businessId,
+    name: sanitizeText(input.name, 140),
+    description: sanitizeMultiline(input.description || '', 1000) || null,
+    price: input.price,
+    discount_price: input.discountPrice ?? null,
+    image_url: sanitizeText(input.imageUrl || '', 500) || null,
+    is_available: input.isAvailable !== false,
+    display_order: existingCount ?? 0,
+  });
+
+  if (error) return { data: null, error: err(error.message) };
+  // Return the refreshed business so callers update their state in one step.
+  return fetchBusinessById(businessId);
+}
+
+export async function updateProduct(
+  productId: string,
+  input: ProductInput
+): Promise<DbResult<Business>> {
+  const { userId, error: authError } = await getSessionUserId();
+  if (authError || !userId) return { data: null, error: authError };
+
+  const { data: product, error: fetchError } = await supabase
+    .from('business_products')
+    .select('id, business_id, businesses ( owner_id )')
+    .eq('id', productId)
+    .maybeSingle();
+
+  if (fetchError) return { data: null, error: err(fetchError.message) };
+  if (!product) return { data: null, error: 'Product not found.' };
+  // supabase-js may shape the joined row as an array when multiple FK paths
+  // exist — normalize both shapes.
+  const bizRow: any = Array.isArray(product.businesses) ? product.businesses[0] : product.businesses;
+  const ownerId = bizRow?.owner_id;
+  if (ownerId !== userId) {
+    return { data: null, error: 'You can only manage products of your own business.' };
+  }
+
+  const { error } = await supabase
+    .from('business_products')
+    .update({
+      name: sanitizeText(input.name, 140),
+      description: sanitizeMultiline(input.description || '', 1000) || null,
+      price: input.price,
+      discount_price: input.discountPrice ?? null,
+      image_url: sanitizeText(input.imageUrl || '', 500) || null,
+      is_available: input.isAvailable !== false,
+    })
+    .eq('id', productId);
+
+  if (error) return { data: null, error: err(error.message) };
+  return fetchBusinessById(product.business_id);
+}
+
+export async function deleteProduct(productId: string): Promise<DbResult<null>> {
+  const { userId, error: authError } = await getSessionUserId();
+  if (authError || !userId) return { data: null, error: authError };
+
+  const { data: product, error: fetchError } = await supabase
+    .from('business_products')
+    .select('id, business_id, businesses ( owner_id )')
+    .eq('id', productId)
+    .maybeSingle();
+
+  if (fetchError) return { data: null, error: err(fetchError.message) };
+  if (!product) return { data: null, error: null }; // already gone — idempotent
+  // supabase-js may shape the joined row as an array when multiple FK paths
+  // exist — normalize both shapes.
+  const bizRow: any = Array.isArray(product.businesses) ? product.businesses[0] : product.businesses;
+  const ownerId = bizRow?.owner_id;
+  if (ownerId !== userId) {
+    return { data: null, error: 'You can only manage products of your own business.' };
+  }
+
+  const { error } = await supabase.from('business_products').delete().eq('id', productId);
   if (error) return { data: null, error: err(error.message) };
   return { data: null, error: null };
 }

@@ -36,8 +36,11 @@ export interface ProductOrService {
   name: string;
   price?: string; // formatted e.g. "PKR 3,500"
   numericPrice?: number;
+  discountPrice?: number; // optional sale price (always < numericPrice)
+  discountedPrice?: string; // formatted sale price e.g. "PKR 2,900"
   description: string;
   image?: string;
+  isAvailable?: boolean; // availability toggle (defaults to true)
 }
 
 export interface Review {
